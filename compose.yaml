@@ -10,6 +10,7 @@ services:
       PROXY_BIND_IP: ${PROXY_BIND_IP:-127.0.0.2}
     volumes:
       - ./data/proxy:/data
+      - ./data/staging:/staging
     restart: "no"
 
   mqtt:
@@ -23,7 +24,7 @@ services:
       - "${PROXY_BIND_IP:-127.0.0.2}:8883:8883"
     user: "1883:1883"
     volumes:
-      - ./data/proxy:/mosquitto/secrets:ro
+      - ./data/proxy/runtime:/mosquitto/secrets:ro
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -41,6 +42,50 @@ services:
       retries: 5
       start_period: 10s
 
+  ftps:
+    build:
+      context: .
+      dockerfile: Dockerfile.ftps
+      args:
+        PROXY_VERSION: ${PROXY_VERSION:-dev}
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "${PROXY_BIND_IP:-127.0.0.2}:990:9990"
+      - "${PROXY_BIND_IP:-127.0.0.2}:50000-50009:50000-50009"
+    environment:
+      FTPS_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
+      FTPS_ADVERTISE_IP: ${PROXY_BIND_IP:-127.0.0.2}
+      FTPS_PORT: "9990"
+      FTPS_PASSIVE_MIN: "50000"
+      FTPS_PASSIVE_MAX: "50009"
+      FTPS_ROOT: /staging
+      FTPS_MAX_UPLOAD_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
+      FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
+      LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/proxy/runtime/certs:/secrets/certs:ro
+      - ./data/staging:/staging
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket,ssl; c=ssl._create_unverified_context(); s=c.wrap_socket(socket.socket(),server_hostname='localhost'); s.settimeout(3); s.connect(('127.0.0.1',9990)); assert s.recv(4).startswith(b'220 '); s.close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   gateway:
     build:
       context: .
@@ -49,6 +94,8 @@ services:
         PROXY_VERSION: ${PROXY_VERSION:-dev}
     depends_on:
       mqtt:
+        condition: service_healthy
+      ftps:
         condition: service_healthy
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:
@@ -62,10 +109,16 @@ services:
       CLOUD_LAN_PROXY_BROKER_PORT: "1883"
       CLOUD_LAN_PROXY_MODE: ${PROXY_MODE:-read_only}
       CLOUD_LAN_PROXY_ALLOW_CANCEL: ${PROXY_ALLOW_CANCEL:-false}
+      CLOUD_LAN_PROXY_CLOUD_PRINT_ENABLED: ${PROXY_CLOUD_PRINT_ENABLED:-false}
+      CLOUD_LAN_PROXY_CLOUD_PRINT_WAIT_SECONDS: ${PROXY_CLOUD_PRINT_WAIT_SECONDS:-900}
+      CLOUD_LAN_PROXY_CLOUD_PRINT_PROGRESS_TIMEOUT: ${PROXY_CLOUD_PRINT_PROGRESS_TIMEOUT:-900}
+      CLOUD_LAN_PROXY_CLOUD_PRINT_MAX_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
+      CLOUD_LAN_PROXY_STAGING_DIR: /staging
       CLOUD_LAN_PROXY_ADVERTISE_CONTROLS: ${PROXY_ADVERTISE_CONTROLS:-auto}
       CLOUD_LAN_PROXY_PRINTERS: ${PROXY_PRINTERS:-}
     volumes:
       - ./data/gateway:/data
+      - ./data/staging:/staging:ro
     restart: unless-stopped
     stop_grace_period: 30s
     read_only: true

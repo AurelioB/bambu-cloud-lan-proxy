@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1
+
+FROM python:3.13-alpine@sha256:540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d
+
+ARG PROXY_VERSION="dev"
+LABEL org.opencontainers.image.title="Bambu Cloud LAN Proxy FTPS" \
+      org.opencontainers.image.description="Implicit-FTPS staging filesystem for Bambu clients" \
+      org.opencontainers.image.version="${PROXY_VERSION}" \
+      org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy"
+
+COPY src/bambu_cloud_lan_proxy /opt/bambu-cloud-lan-proxy/bambu_cloud_lan_proxy
+
+ENV PYTHONPATH="/opt/bambu-cloud-lan-proxy"
+USER 1883:1883
+ENTRYPOINT ["python", "-m", "bambu_cloud_lan_proxy.ftps_server"]

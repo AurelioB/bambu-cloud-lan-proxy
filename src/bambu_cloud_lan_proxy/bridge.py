@@ -6,9 +6,15 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import shutil
+import tempfile
 import threading
 import time
+import zipfile
 from collections import OrderedDict
+from contextlib import aclosing
+from pathlib import Path
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -16,6 +22,14 @@ import paho.mqtt.client as mqtt
 from .commands import translate_control
 from .config import ProxyConfig
 from .policy import Action, Decision, decide, rejection_envelope
+from .print_jobs import (
+    CloudPrintRequest,
+    CloudPrintValidationError,
+    build_gateway_print_params,
+    cloud_print_ack,
+    cloud_print_failure,
+    parse_cloud_print_request,
+)
 from .reports import prepare_report
 
 logger = logging.getLogger("bambu.cloud_lan_proxy")
@@ -32,6 +46,12 @@ class CloudLanFacade:
         self._started = False
         self._start_lock = threading.Lock()
         self._recent: OrderedDict[str, float] = OrderedDict()
+        self._print_jobs: OrderedDict[str, tuple[float, str, CloudPrintRequest, str]] = (
+            OrderedDict()
+        )
+        self._print_locks: dict[str, asyncio.Lock] = {}
+        self._active_print_serials: set[str] = set()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def register(self, cloud_client: Any) -> None:
         serial = str(cloud_client.serial).upper()
@@ -78,6 +98,11 @@ class CloudLanFacade:
                 self.config.allow_cancel,
                 self.config.advertise_controls,
             )
+            logger.info(
+                "cloud print enabled=%s staging=%s",
+                self.config.cloud_print_enabled,
+                self.config.staging_dir,
+            )
 
     def publish_report(self, serial: str, raw: object) -> None:
         serial = serial.upper()
@@ -104,9 +129,7 @@ class CloudLanFacade:
         client.subscribe("device/+/request", qos=self.config.request_qos)
         logger.info("connected to local MQTT broker and subscribed to request topics")
 
-    def _on_disconnect(
-        self, _client, _userdata, _flags, reason_code, _properties
-    ) -> None:
+    def _on_disconnect(self, _client, _userdata, _flags, reason_code, _properties) -> None:
         if reason_code.is_failure:
             logger.warning("local MQTT disconnected unexpectedly: %s", reason_code)
 
@@ -129,6 +152,7 @@ class CloudLanFacade:
             envelope,
             mode=self.config.mode,
             allow_cancel=self.config.allow_cancel,
+            allow_cloud_print=self.config.cloud_print_enabled,
         )
         if not decision.allowed:
             self._publish_rejection(serial, decision)
@@ -145,11 +169,6 @@ class CloudLanFacade:
             )
             return
 
-        if decision.action is Action.FORWARD_CONTROL and self._is_duplicate(
-            serial, decision, message.payload
-        ):
-            logger.info("serial=%s ignored duplicate command", serial)
-            return
         loop = self._loop
         if loop is None or loop.is_closed():
             self._publish_rejection(
@@ -157,9 +176,269 @@ class CloudLanFacade:
                 Decision(Action.BLOCK, decision.request, "Gateway event loop unavailable"),
             )
             return
+
+        if decision.action is Action.CLOUD_PRINT:
+            raw = bytes(message.payload)
+            loop.call_soon_threadsafe(
+                self._schedule_cloud_print,
+                serial,
+                cloud_client,
+                decision,
+                raw,
+            )
+            return
+
+        if decision.action is Action.FORWARD_CONTROL and self._is_duplicate(
+            serial, decision, message.payload
+        ):
+            logger.info("serial=%s ignored duplicate command", serial)
+            return
         loop.call_soon_threadsafe(
             lambda: asyncio.create_task(self._dispatch(serial, cloud_client, decision))
         )
+
+    def _schedule_cloud_print(
+        self,
+        serial: str,
+        cloud_client: Any,
+        decision: Decision,
+        raw: bytes,
+    ) -> None:
+        request = decision.request
+        assert request is not None
+        try:
+            print_request = parse_cloud_print_request(request.body)
+        except CloudPrintValidationError as exc:
+            self._publish_json(
+                serial,
+                cloud_print_failure(
+                    sequence_id=request.sequence_id,
+                    reason=str(exc),
+                ),
+            )
+            logger.warning("serial=%s rejected cloud print: %s", serial, exc)
+            return
+
+        now = time.monotonic()
+        for key, (seen_at, state, _request, _reason) in list(self._print_jobs.items()):
+            if state != "active" and seen_at < now - 3600:
+                self._print_jobs.pop(key, None)
+
+        job_key = hashlib.sha256(serial.encode() + b"\0" + raw).hexdigest()
+        previous = self._print_jobs.get(job_key)
+        if previous is not None:
+            _seen_at, state, old_request, reason = previous
+            if state == "failed":
+                self._publish_json(
+                    serial,
+                    cloud_print_failure(
+                        sequence_id=old_request.sequence_id,
+                        filename=old_request.filename,
+                        reason=reason,
+                    ),
+                )
+            else:
+                self._publish_json(serial, cloud_print_ack(old_request))
+            logger.info(
+                "serial=%s replayed cloud print response job=%s state=%s",
+                serial,
+                job_key[:12],
+                state,
+            )
+            return
+
+        state_error = self._printer_start_error(cloud_client)
+        if state_error is None and serial in self._active_print_serials:
+            state_error = "another cloud print submission is already pending"
+        if state_error is not None:
+            self._print_jobs[job_key] = (
+                now,
+                "failed",
+                print_request,
+                state_error,
+            )
+            self._publish_json(
+                serial,
+                cloud_print_failure(
+                    sequence_id=print_request.sequence_id,
+                    filename=print_request.filename,
+                    reason=state_error,
+                ),
+            )
+            logger.warning("serial=%s rejected cloud print: %s", serial, state_error)
+            return
+
+        self._print_jobs[job_key] = (now, "active", print_request, "")
+        self._print_jobs.move_to_end(job_key)
+        self._active_print_serials.add(serial)
+        self._publish_json(serial, cloud_print_ack(print_request))
+        task = asyncio.create_task(
+            self._run_cloud_print(serial, cloud_client, job_key, print_request),
+            name=f"cloud-print-{serial}-{job_key[:12]}",
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        logger.info(
+            "serial=%s accepted staged cloud print job=%s file=%s plate=%d",
+            serial,
+            job_key[:12],
+            print_request.filename,
+            print_request.plate_index,
+        )
+
+    @staticmethod
+    def _printer_start_error(cloud_client: Any) -> str | None:
+        try:
+            status = cloud_client.get_status()
+        except Exception as exc:
+            return f"printer status unavailable ({exc})"
+        if not bool(getattr(status, "online", False)):
+            return "printer is offline"
+        raw_state = getattr(status, "state", "offline")
+        state = getattr(raw_state, "value", str(raw_state)).lower()
+        if state not in {"idle", "finished", "cancelled"}:
+            return f"printer is busy ({state})"
+        if getattr(cloud_client, "_progress", None) is not None:
+            return "another cloud print submission is already in flight"
+        return None
+
+    async def _run_cloud_print(
+        self,
+        serial: str,
+        cloud_client: Any,
+        job_key: str,
+        request: CloudPrintRequest,
+    ) -> None:
+        snapshot: Path | None = None
+        try:
+            lock = self._print_locks.setdefault(serial, asyncio.Lock())
+            async with lock:
+                source = await self._wait_for_staged_file(request)
+                state_error = self._printer_start_error(cloud_client)
+                if state_error is not None:
+                    raise RuntimeError(state_error)
+                snapshot = await self._snapshot_staged_file(source, request.filename)
+                params = build_gateway_print_params(
+                    request,
+                    serial=serial,
+                    file_path=snapshot,
+                )
+
+                terminal = False
+                async with aclosing(
+                    cloud_client.submit_print(
+                        print_params=params,
+                        progress_timeout=self.config.cloud_print_progress_timeout,
+                    )
+                ) as frames:
+                    async for frame in frames:
+                        event = frame.get("event")
+                        if event == "error":
+                            raise RuntimeError(
+                                str(frame.get("msg") or frame.get("code") or "cloud error")
+                            )
+                        if event == "done":
+                            terminal = True
+                            break
+                        logger.info(
+                            "serial=%s cloud print job=%s stage=%s code=%s",
+                            serial,
+                            job_key[:12],
+                            frame.get("stage"),
+                            frame.get("code"),
+                        )
+                if not terminal:
+                    raise RuntimeError("cloud submission ended without a terminal frame")
+
+            self._print_jobs[job_key] = (
+                time.monotonic(),
+                "succeeded",
+                request,
+                "",
+            )
+            logger.info(
+                "serial=%s cloud print job=%s submitted successfully",
+                serial,
+                job_key[:12],
+            )
+        except Exception as exc:
+            reason = str(exc)[:300] or type(exc).__name__
+            self._print_jobs[job_key] = (
+                time.monotonic(),
+                "failed",
+                request,
+                reason,
+            )
+            self._publish_json(
+                serial,
+                cloud_print_failure(
+                    sequence_id=request.sequence_id,
+                    filename=request.filename,
+                    reason=reason,
+                ),
+            )
+            logger.error(
+                "serial=%s cloud print job=%s failed: %s",
+                serial,
+                job_key[:12],
+                reason,
+            )
+        finally:
+            self._active_print_serials.discard(serial)
+            if snapshot is not None:
+                try:
+                    snapshot.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning("could not remove cloud print snapshot: %s", exc)
+
+    async def _wait_for_staged_file(self, request: CloudPrintRequest) -> Path:
+        root = self.config.staging_dir.resolve()
+        source = root.joinpath(*request.relative_path.parts)
+        deadline = asyncio.get_running_loop().time() + self.config.cloud_print_wait_seconds
+        while True:
+            try:
+                if source.is_symlink():
+                    raise RuntimeError("staged file path is unsafe")
+                resolved = source.resolve(strict=True)
+                if not resolved.is_relative_to(root):
+                    raise RuntimeError("staged file path is unsafe")
+                stat = resolved.stat()
+                if not resolved.is_file() or stat.st_size <= 0:
+                    raise RuntimeError("staged file is empty or not a regular file")
+                if stat.st_size > self.config.cloud_print_max_bytes:
+                    raise RuntimeError("staged file exceeds the cloud print size limit")
+                return resolved
+            except FileNotFoundError:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise RuntimeError(
+                        f"timed out waiting for FTPS upload of {request.filename}"
+                    ) from None
+                await asyncio.sleep(0.25)
+
+    async def _snapshot_staged_file(self, source: Path, filename: str) -> Path:
+        job_dir = self.config.cloud_print_job_dir
+        job_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd, raw_path = tempfile.mkstemp(
+            prefix="cloud-lan-proxy-",
+            suffix=Path(filename).suffix or ".3mf",
+            dir=job_dir,
+        )
+        os.close(fd)
+        snapshot = Path(raw_path)
+        try:
+            await asyncio.to_thread(shutil.copyfile, source, snapshot)
+            if snapshot.stat().st_size > self.config.cloud_print_max_bytes:
+                raise RuntimeError("staged file exceeds the cloud print size limit")
+
+            def _validate() -> None:
+                with zipfile.ZipFile(snapshot) as archive:
+                    archive.infolist()
+
+            await asyncio.to_thread(_validate)
+            return snapshot
+        except Exception:
+            snapshot.unlink(missing_ok=True)
+            raise
 
     def _is_duplicate(self, serial: str, decision: Decision, raw: bytes) -> bool:
         now = time.monotonic()
@@ -211,6 +490,11 @@ class CloudLanFacade:
             return
         payload = rejection_envelope(decision)
         if payload is None:
+            return
+        self._publish_json(serial, payload)
+
+    def _publish_json(self, serial: str, payload: dict[str, Any]) -> None:
+        if self._mqtt is None:
             return
         self._mqtt.publish(
             f"device/{serial}/report",

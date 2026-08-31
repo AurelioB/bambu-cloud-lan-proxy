@@ -12,6 +12,7 @@ from .config import ProxyMode
 class Action(StrEnum):
     FORWARD_QUERY = "forward_query"
     FORWARD_CONTROL = "forward_control"
+    CLOUD_PRINT = "cloud_print"
     BLOCK = "block"
 
 
@@ -57,6 +58,7 @@ SAFE_CONTROLS = frozenset(
 )
 
 CANCEL_COMMAND = ("print", "stop")
+CLOUD_PRINT_COMMAND = ("print", "project_file")
 NAMESPACES = ("pushing", "info", "system", "print")
 
 
@@ -84,7 +86,13 @@ def parse_request(envelope: object) -> ParsedRequest | None:
     return candidates[0]
 
 
-def decide(envelope: object, *, mode: ProxyMode, allow_cancel: bool) -> Decision:
+def decide(
+    envelope: object,
+    *,
+    mode: ProxyMode,
+    allow_cancel: bool,
+    allow_cloud_print: bool = False,
+) -> Decision:
     request = parse_request(envelope)
     if request is None:
         return Decision(Action.BLOCK, None, "malformed or ambiguous command envelope")
@@ -92,6 +100,15 @@ def decide(envelope: object, *, mode: ProxyMode, allow_cancel: bool) -> Decision
     command_key = (request.namespace, request.command)
     if command_key in SAFE_QUERIES:
         return Decision(Action.FORWARD_QUERY, request, "read-only query")
+
+    # A raw project_file relay cannot work: its ftp:// URL names the facade's
+    # staged file, which the physical cloud printer cannot reach. It must go
+    # through the dedicated signed cloud-upload path or fail closed, including
+    # in unsafe mode.
+    if command_key == CLOUD_PRINT_COMMAND:
+        if allow_cloud_print:
+            return Decision(Action.CLOUD_PRINT, request, "cloud print explicitly enabled")
+        return Decision(Action.BLOCK, request, "cloud print is disabled")
 
     if mode is ProxyMode.READ_ONLY:
         return Decision(Action.BLOCK, request, "proxy is in read-only mode")

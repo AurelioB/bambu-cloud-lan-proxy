@@ -22,7 +22,22 @@ esac
 cert_dir=/data/certs
 auth_dir=/data/auth
 export_dir=/data/export
-mkdir -p "$cert_dir" "$auth_dir" "$export_dir"
+runtime_dir=/data/runtime
+runtime_cert_dir=$runtime_dir/certs
+runtime_auth_dir=$runtime_dir/auth
+mkdir -p \
+  "$cert_dir" \
+  "$auth_dir" \
+  "$export_dir" \
+  "$runtime_cert_dir" \
+  "$runtime_auth_dir"
+
+staging_dir=${PROXY_STAGING_DIR:-/staging}
+mkdir -p \
+  "$staging_dir/cache" \
+  "$staging_dir/timelapse" \
+  "$staging_dir/model" \
+  "$staging_dir/data/Metadata"
 
 if [ ! -s "$cert_dir/ca.key" ] || [ ! -s "$cert_dir/ca.crt" ]; then
   echo "Generating local proxy certificate authority"
@@ -69,12 +84,28 @@ if [ -f "$auth_dir/passwords" ]; then
 fi
 mosquitto_passwd -b -c "$auth_dir/passwords" bblp "$PROXY_ACCESS_CODE"
 cp "$cert_dir/ca.crt" "$export_dir/bambu-cloud-lan-proxy-ca.crt"
+cp "$cert_dir/ca.crt" "$runtime_cert_dir/ca.crt"
+cp "$cert_dir/server.crt" "$runtime_cert_dir/server.crt"
+cp "$cert_dir/server.key" "$runtime_cert_dir/server.key"
+cp "$auth_dir/passwords" "$runtime_auth_dir/passwords"
 
-# The broker runs as the image's fixed mosquitto uid/gid.
-chown -R 1883:1883 "$cert_dir" "$auth_dir"
+# Keep the CA signing key root-only. Runtime containers receive a separate
+# directory containing only the server material and hashed password they need.
+chown -R 0:0 "$cert_dir" "$auth_dir"
 chmod 700 "$cert_dir" "$auth_dir"
+chown -R 1883:1883 "$runtime_dir"
+chmod 700 "$runtime_dir" "$runtime_cert_dir" "$runtime_auth_dir"
 chmod 755 "$export_dir"
 chmod 600 "$cert_dir/ca.key" "$cert_dir/server.key" "$auth_dir/passwords"
 chmod 644 "$cert_dir/ca.crt" "$cert_dir/server.crt" "$export_dir/bambu-cloud-lan-proxy-ca.crt"
+chmod 600 "$runtime_cert_dir/server.key" "$runtime_auth_dir/passwords"
+chmod 644 "$runtime_cert_dir/ca.crt" "$runtime_cert_dir/server.crt"
 
-echo "Proxy TLS and MQTT credentials are ready"
+# The FTPS container runs as the same fixed numeric uid as Mosquitto. Staged
+# files are world-readable so the unprivileged Gateway uid can snapshot them,
+# while directory writes remain limited to the FTPS service.
+chown -R 1883:1883 "$staging_dir"
+find "$staging_dir" -type d -exec chmod 755 {} \;
+find "$staging_dir" -type f -exec chmod 644 {} \;
+
+echo "Proxy TLS, MQTT credentials, and FTPS staging storage are ready"

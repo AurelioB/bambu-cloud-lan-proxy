@@ -29,6 +29,11 @@ def install() -> CloudLanFacade | None:
         CloudPrinterClient, "send_command"
     ):
         raise RuntimeError("unsupported Bambu Gateway CloudPrinterClient API")
+    if config.cloud_print_enabled and (
+        not hasattr(CloudPrinterClient, "submit_print")
+        or not hasattr(CloudPrinterClient, "get_status")
+    ):
+        raise RuntimeError("cloud printing enabled but the pinned Gateway print API is unavailable")
 
     facade = CloudLanFacade(config)
     original_init = CloudPrinterClient.__init__

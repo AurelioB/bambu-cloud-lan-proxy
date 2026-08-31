@@ -75,3 +75,29 @@ def test_ambiguous_envelope_is_rejected() -> None:
 
     assert decision.action is Action.BLOCK
     assert decision.request is None
+
+
+def test_cloud_print_needs_its_own_opt_in_even_in_unsafe_mode() -> None:
+    envelope = {
+        "print": {
+            "command": "project_file",
+            "file": "cube.gcode.3mf",
+            "url": "ftp://cube.gcode.3mf",
+        }
+    }
+    denied = decide(
+        envelope,
+        mode=ProxyMode.UNSAFE,
+        allow_cancel=True,
+        allow_cloud_print=False,
+    )
+    allowed = decide(
+        envelope,
+        mode=ProxyMode.READ_ONLY,
+        allow_cancel=False,
+        allow_cloud_print=True,
+    )
+
+    assert denied.action is Action.BLOCK
+    assert denied.reason == "cloud print is disabled"
+    assert allowed.action is Action.CLOUD_PRINT

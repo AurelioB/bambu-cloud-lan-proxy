@@ -19,7 +19,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e '.[dev]'
       - run: python -m pytest
-      - run: python -m ruff check src tests
+      - run: python -m ruff check src tests scripts/verify_ftps.py
       - run: cp .env.example .env
       - run: sed -i 's/PROXY_ACCESS_CODE=CHANGE_ME/PROXY_ACCESS_CODE=TEST1234/' .env
       - run: docker compose config --quiet
