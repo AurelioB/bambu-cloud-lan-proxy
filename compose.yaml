@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data/proxy:/data
       - ./data/staging:/staging
+      - ./data/remote-cache:/remote-cache
       - ./data/camera:/camera-state
     restart: "no"
 
@@ -64,10 +65,15 @@ services:
       FTPS_ROOT: /staging
       FTPS_MAX_UPLOAD_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
       FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
+      FTPS_REMOTE_API_URL: http://gateway:4844/internal/cloud-lan-proxy/storage
+      FTPS_REMOTE_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
+      FTPS_REMOTE_CACHE_DIR: /remote-cache
+      FTPS_REMOTE_CATALOG_TTL: ${PROXY_STORAGE_CATALOG_TTL:-30}
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
     volumes:
       - ./data/proxy/runtime/certs:/secrets/certs:ro
       - ./data/staging:/staging
+      - ./data/remote-cache:/remote-cache
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -197,9 +203,13 @@ services:
       CLOUD_LAN_PROXY_STAGING_DIR: /staging
       CLOUD_LAN_PROXY_ADVERTISE_CONTROLS: ${PROXY_ADVERTISE_CONTROLS:-auto}
       CLOUD_LAN_PROXY_PRINTERS: ${PROXY_PRINTERS:-}
+      CLOUD_LAN_PROXY_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
+      CLOUD_LAN_PROXY_REMOTE_CACHE_DIR: /remote-cache
+      CLOUD_LAN_PROXY_REMOTE_MAX_MB: ${PROXY_STORAGE_MAX_DOWNLOAD_MB:-4096}
     volumes:
       - ./data/gateway:/data
       - ./data/staging:/staging:ro
+      - ./data/remote-cache:/remote-cache
     restart: unless-stopped
     stop_grace_period: 30s
     read_only: true

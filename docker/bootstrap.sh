@@ -26,18 +26,21 @@ runtime_dir=/data/runtime
 runtime_cert_dir=$runtime_dir/certs
 runtime_auth_dir=$runtime_dir/auth
 camera_state_dir=${PROXY_CAMERA_STATE_DIR:-/camera-state}
+remote_cache_dir=${PROXY_REMOTE_CACHE_DIR:-/remote-cache}
 mkdir -p \
   "$cert_dir" \
   "$auth_dir" \
   "$export_dir" \
   "$runtime_cert_dir" \
   "$runtime_auth_dir" \
-  "$camera_state_dir"
+  "$camera_state_dir" \
+  "$remote_cache_dir"
 
 staging_dir=${PROXY_STAGING_DIR:-/staging}
 mkdir -p \
   "$staging_dir/cache" \
   "$staging_dir/timelapse" \
+  "$staging_dir/video" \
   "$staging_dir/model" \
   "$staging_dir/data/Metadata"
 
@@ -99,6 +102,8 @@ chown -R 1883:1883 "$runtime_dir"
 chown -R 1883:1883 "$camera_state_dir"
 chmod 700 "$runtime_dir" "$runtime_cert_dir" "$runtime_auth_dir"
 chmod 700 "$camera_state_dir"
+chmod 1777 "$remote_cache_dir"
+find "$remote_cache_dir" -type f -mtime +1 -delete
 chmod 755 "$export_dir"
 chmod 600 "$cert_dir/ca.key" "$cert_dir/server.key" "$auth_dir/passwords"
 chmod 644 "$cert_dir/ca.crt" "$cert_dir/server.crt" "$export_dir/bambu-cloud-lan-proxy-ca.crt"

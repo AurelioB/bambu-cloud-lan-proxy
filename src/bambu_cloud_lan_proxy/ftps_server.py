@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 import ssl
-import stat as stat_module
 import time
 import uuid
 import zipfile
@@ -19,6 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from .remote_storage import RemoteFile, RemoteStorageClient
+
 logger = logging.getLogger("bambu.cloud_lan_proxy.ftps")
 _ACCESS_CODE_RE = re.compile(r"[A-Za-z0-9]{8}\Z")
 _INTERNAL_PREFIXES = (".upload-", ".proxy-")
@@ -26,6 +27,16 @@ _INTERNAL_PREFIXES = (".upload-", ".proxy-")
 
 class StorageQuotaError(OSError):
     """The configured staging quota would be exceeded."""
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualEntry:
+    name: str
+    is_dir: bool
+    size: int
+    mtime: float
+    local_path: Path | None = None
+    remote: RemoteFile | None = None
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -53,6 +64,10 @@ class FTPSConfig:
     max_upload_bytes: int
     max_total_bytes: int
     idle_timeout: float
+    remote_api_url: str = ""
+    remote_serial: str = ""
+    remote_cache_dir: Path = Path("/remote-cache")
+    remote_catalog_ttl: float = 30
 
     @classmethod
     def from_env(cls) -> FTPSConfig:
@@ -87,6 +102,9 @@ class FTPSConfig:
         idle_timeout = float(os.getenv("FTPS_IDLE_TIMEOUT", "300"))
         if idle_timeout <= 0:
             raise ValueError("FTPS_IDLE_TIMEOUT must be positive")
+        remote_catalog_ttl = float(os.getenv("FTPS_REMOTE_CATALOG_TTL", "30"))
+        if remote_catalog_ttl <= 0:
+            raise ValueError("FTPS_REMOTE_CATALOG_TTL must be positive")
 
         return cls(
             bind_host=os.getenv("FTPS_BIND_HOST", "0.0.0.0"),  # nosec B104
@@ -101,6 +119,10 @@ class FTPSConfig:
             max_upload_bytes=max_upload_mb * 1024 * 1024,
             max_total_bytes=max_total_mb * 1024 * 1024,
             idle_timeout=idle_timeout,
+            remote_api_url=os.getenv("FTPS_REMOTE_API_URL", "").strip(),
+            remote_serial=os.getenv("FTPS_REMOTE_SERIAL", "").strip().upper(),
+            remote_cache_dir=Path(os.getenv("FTPS_REMOTE_CACHE_DIR", "/remote-cache")),
+            remote_catalog_ttl=remote_catalog_ttl,
         )
 
 
@@ -116,7 +138,14 @@ class StagingStore:
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        for relative in ("cache", "timelapse", "model", "data", "data/Metadata"):
+        for relative in (
+            "cache",
+            "timelapse",
+            "video",
+            "model",
+            "data",
+            "data/Metadata",
+        ):
             (self.root / relative).mkdir(parents=True, exist_ok=True)
         cutoff = time.time() - 24 * 60 * 60
         for path in self.root.rglob(".upload-*.part"):
@@ -535,15 +564,22 @@ class FTPSSession:
             return
         virtual = self.virtual_path(argument)
         source = self.real_path(virtual)
+        remote_cache: Path | None = None
+        remote: RemoteFile | None = None
         if not source.is_file():
-            await self.reply(550, "File not found")
-            await self.close_data()
-            return
+            remote = await self.server.remote.find(virtual)
+            if remote is None:
+                await self.reply(550, "File not found")
+                await self.close_data()
+                return
         if not await self.begin_transfer(virtual.name):
             return
         sent = 0
         failure = False
         try:
+            if remote is not None:
+                remote_cache = await self.server.remote.download(remote)
+                source = remote_cache
             with source.open("rb") as input_file:
                 if self.restart_offset:
                     input_file.seek(self.restart_offset)
@@ -557,6 +593,8 @@ class FTPSSession:
         finally:
             self.restart_offset = 0
             await self.close_data()
+            if remote_cache is not None:
+                await self.server.remote.discard(remote_cache)
         await self.reply(
             426 if failure else 226,
             "Transfer failed" if failure else "Transfer complete",
@@ -571,7 +609,7 @@ class FTPSSession:
             tokens.pop(0)
         return " ".join(tokens)
 
-    def _entries(self, argument: str) -> list[Path]:
+    async def _entries(self, argument: str) -> list[VirtualEntry]:
         virtual = self.virtual_path(self._listing_argument(argument))
         target = self.real_path(virtual)
         if target.is_dir():
@@ -580,32 +618,43 @@ class FTPSSession:
             entries = [target]
         else:
             raise FileNotFoundError("Path not found")
-        return sorted(
-            (
-                entry
-                for entry in entries
-                if not entry.is_symlink() and not entry.name.startswith(_INTERNAL_PREFIXES)
-            ),
-            key=lambda entry: entry.name.lower(),
-        )
+        merged: dict[str, VirtualEntry] = {}
+        for entry in entries:
+            if entry.is_symlink() or entry.name.startswith(_INTERNAL_PREFIXES):
+                continue
+            details = entry.stat()
+            merged[entry.name] = VirtualEntry(
+                entry.name,
+                entry.is_dir(),
+                details.st_size if entry.is_file() else 0,
+                details.st_mtime,
+                local_path=entry,
+            )
+        if target.is_dir():
+            for remote in await self.server.remote.list(virtual):
+                merged.setdefault(
+                    remote.name,
+                    VirtualEntry(
+                        remote.name, False, remote.size, remote.mtime, remote=remote
+                    ),
+                )
+        return sorted(merged.values(), key=lambda entry: entry.name.lower())
 
     @staticmethod
-    def _list_line(path: Path) -> str:
-        details = path.stat()
-        mode = stat_module.filemode(details.st_mode)
-        stamp = datetime.fromtimestamp(details.st_mtime)
-        if abs(time.time() - details.st_mtime) < 180 * 24 * 60 * 60:
+    def _list_line(entry: VirtualEntry) -> str:
+        mode = "drwxr-xr-x" if entry.is_dir else "-rw-r--r--"
+        stamp = datetime.fromtimestamp(entry.mtime)
+        if abs(time.time() - entry.mtime) < 180 * 24 * 60 * 60:
             rendered_time = stamp.strftime("%b %d %H:%M")
         else:
             rendered_time = stamp.strftime("%b %d  %Y")
-        size = details.st_size if path.is_file() else 0
-        return f"{mode} 1 bblp bblp {size} {rendered_time} {path.name}"
+        return f"{mode} 1 bblp bblp {entry.size} {rendered_time} {entry.name}"
 
     async def _send_listing(self, argument: str, *, machine: bool, names: bool) -> None:
         if not await self.require_auth():
             return
         try:
-            entries = self._entries(argument)
+            entries = await self._entries(argument)
         except FileNotFoundError:
             await self.reply(550, "Path not found")
             await self.close_data()
@@ -617,13 +666,12 @@ class FTPSSession:
             if names:
                 lines.append(entry.name)
             elif machine:
-                details = entry.stat()
-                kind = "dir" if entry.is_dir() else "file"
-                modified = datetime.fromtimestamp(details.st_mtime, UTC).strftime(
+                kind = "dir" if entry.is_dir else "file"
+                modified = datetime.fromtimestamp(entry.mtime, UTC).strftime(
                     "%Y%m%d%H%M%S"
                 )
                 lines.append(
-                    f"type={kind};size={details.st_size if entry.is_file() else 0};"
+                    f"type={kind};size={entry.size};"
                     f"modify={modified}; {entry.name}"
                 )
             else:
@@ -644,39 +692,53 @@ class FTPSSession:
     async def cmd_MLST(self, argument: str) -> None:
         if not await self.require_auth():
             return
-        target = self.real_path(self.virtual_path(argument))
-        if not target.exists():
+        virtual = self.virtual_path(argument)
+        target = self.real_path(virtual)
+        remote = None if target.exists() else await self.server.remote.find(virtual)
+        if not target.exists() and remote is None:
             await self.reply(550, "Path not found")
             return
-        details = target.stat()
-        kind = "dir" if target.is_dir() else "file"
-        modified = datetime.fromtimestamp(details.st_mtime, UTC).strftime("%Y%m%d%H%M%S")
+        details = target.stat() if target.exists() else None
+        kind = "dir" if details and target.is_dir() else "file"
+        size = details.st_size if details and target.is_file() else remote.size if remote else 0
+        mtime = details.st_mtime if details else remote.mtime if remote else 0
+        modified = datetime.fromtimestamp(mtime, UTC).strftime("%Y%m%d%H%M%S")
         await self.multiline(
             250,
             [
                 "Listing",
-                f"type={kind};size={details.st_size if target.is_file() else 0};"
-                f"modify={modified}; {target.name}",
+                f"type={kind};size={size};modify={modified}; {virtual.name}",
             ],
         )
 
     async def cmd_SIZE(self, argument: str) -> None:
         if not await self.require_auth():
             return
-        target = self.real_path(self.virtual_path(argument))
+        virtual = self.virtual_path(argument)
+        target = self.real_path(virtual)
         if not target.is_file():
-            await self.reply(550, "File not found")
-            return
-        await self.reply(213, str(target.stat().st_size))
+            remote = await self.server.remote.find(virtual)
+            if remote is None:
+                await self.reply(550, "File not found")
+                return
+            await self.reply(213, str(remote.size))
+        else:
+            await self.reply(213, str(target.stat().st_size))
 
     async def cmd_MDTM(self, argument: str) -> None:
         if not await self.require_auth():
             return
-        target = self.real_path(self.virtual_path(argument))
+        virtual = self.virtual_path(argument)
+        target = self.real_path(virtual)
         if not target.exists():
-            await self.reply(550, "Path not found")
-            return
-        stamp = datetime.fromtimestamp(target.stat().st_mtime, UTC).strftime(
+            remote = await self.server.remote.find(virtual)
+            if remote is None:
+                await self.reply(550, "Path not found")
+                return
+            mtime = remote.mtime
+        else:
+            mtime = target.stat().st_mtime
+        stamp = datetime.fromtimestamp(mtime, UTC).strftime(
             "%Y%m%d%H%M%S"
         )
         await self.reply(213, stamp)
@@ -766,7 +828,10 @@ class FTPSSession:
             return
         if argument.strip():
             try:
-                lines = [self._list_line(entry) for entry in self._entries(argument)]
+                lines = [
+                    self._list_line(entry)
+                    for entry in await self._entries(argument)
+                ]
             except FileNotFoundError:
                 await self.reply(550, "Path not found")
                 return
@@ -794,6 +859,13 @@ class FTPSStagingServer:
     def __init__(self, config: FTPSConfig) -> None:
         self.config = config
         self.store = StagingStore(config)
+        self.remote = RemoteStorageClient(
+            api_url=config.remote_api_url,
+            access_code=config.access_code,
+            serial=config.remote_serial,
+            cache_dir=config.remote_cache_dir,
+            ttl=config.remote_catalog_ttl,
+        )
         self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
         self.ssl_context.load_cert_chain(config.cert_file, config.key_file)

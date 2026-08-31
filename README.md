@@ -26,7 +26,9 @@ reverse proxy Bambu's public broker or place account credentials in Bambuddy.
   Bambuddy (`full_control` mode)
 - Implicit FTPS on port 990 with protected passive data channels
 - Staged file listing, upload, size, download, rename, and delete operations
-- Bambuddy archive reads for files that were uploaded through this proxy
+- Read-through browsing and downloads of the printer's previous jobs,
+  timelapses, and recordings through the official cloud media tunnel
+- Bambuddy archive reads for both staged files and files already on the printer
 - Authenticated RTSPS camera relay on port 322 when the printer's **LAN-only
   liveview** endpoint is enabled and reachable
 - Optional `project_file` handoff to Gateway's signed cloud-print pipeline,
@@ -104,8 +106,21 @@ diagnostic passes whenever the printer's local liveview endpoint is reachable.
 The downstream camera username is `bblp` and it uses the same proxy access code.
 
 Despite Bambuddy's historical wording, the file service is implicit **FTPS**,
-not SSH SFTP. It is a local staging filesystem, not a mirror of the printer's
-internal storage.
+not SSH SFTP. Local files and uploads live in `data/staging/`. The standard
+`cache/`, `timelapse/`, and `video/` directories also merge in read-only files
+reported by the printer through Studio's official cloud media tunnel. A remote
+file is downloaded only when a client retrieves it, validated by size and the
+printer-provided MD5, then removed from the transient cache. Local files win a
+same-name collision. Delete/rename commands never mutate a remote printer file.
+
+Enable this for one printer with:
+
+```dotenv
+PROXY_STORAGE_PRINTER_SERIAL=YOUR_SERIAL
+```
+
+The cloud file path does not require Developer Mode or physical LAN-mode ports.
+It does require the printer and Gateway cloud session to be online.
 
 ## Direct Bambuddy queue dispatch
 
@@ -193,12 +208,14 @@ docker compose ps
 docker compose logs --tail=200 gateway mqtt ftps camera camera-ingress
 ./scripts/verify-mqtt.sh YOUR_PRINTER_SERIAL
 ./scripts/verify-ftps.sh
+./scripts/verify-ftps.sh --remote
 ./scripts/verify-camera.sh
 ```
 
 The MQTT verification waits for one real cloud report and sends no printer
-command. The FTPS verification round-trips one tiny synthetic ZIP/3MF through
-staging and deletes it; it never contacts the physical printer.
+command. The normal FTPS verification round-trips one tiny synthetic ZIP/3MF
+through staging and deletes it. `--remote` additionally lists the printer's
+timelapses and downloads the smallest one without changing printer storage.
 
 - **Bambuddy connects but shows no data:** confirm its serial matches Gateway
   exactly; MQTT topics are case-sensitive. Wait up to 30 seconds for Gateway's
@@ -207,6 +224,9 @@ staging and deletes it; it never contacts the physical printer.
   then rerun `./scripts/init.sh` and restart `mqtt` if it changed.
 - **FTPS/port 990 fails:** confirm `ftps` is healthy and that passive ports
   50000-50009 are reachable from Bambuddy as well as port 990.
+- **Printer files are missing:** set `PROXY_STORAGE_PRINTER_SERIAL`, confirm it
+  is allowed by `PROXY_PRINTERS`, and verify that both the printer and Gateway's
+  cloud account are online. Listings are cached for 30 seconds by default.
 - **Queue upload succeeds but no print starts:** direct dispatch is off by
   default. Check `PROXY_CLOUD_PRINT_ENABLED`, then inspect Gateway logs. A busy
   printer is intentionally refused rather than risking its active job.

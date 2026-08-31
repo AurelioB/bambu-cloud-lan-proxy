@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import ftplib
 import io
 import socket
@@ -60,6 +61,13 @@ def test_payload() -> bytes:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        help="also download the smallest cloud-backed timelapse",
+    )
+    args = parser.parse_args()
     project_dir = Path(__file__).resolve().parent.parent
     env = load_env(project_dir / ".env")
     host = env.get("PROXY_BIND_IP", "127.0.0.2")
@@ -75,7 +83,7 @@ def main() -> None:
     # Bambuddy's H2C profile pins implicit FTPS to TLS 1.2, so this also
     # exercises the exact protocol version used by the real integration.
     context.maximum_version = ssl.TLSVersion.TLSv1_2
-    client = ImplicitFTP_TLS(context=context, timeout=10)
+    client = ImplicitFTP_TLS(context=context, timeout=120 if args.remote else 10)
     name = f"proxy-ftps-check-{uuid.uuid4().hex}.gcode.3mf"
     uploaded = False
     payload = test_payload()
@@ -92,6 +100,24 @@ def main() -> None:
         if downloaded.getvalue() != payload:
             raise RuntimeError("FTPS download did not match the uploaded test file")
         print("FTPS staging round-trip succeeded (TLS control + protected data).")
+        if args.remote:
+            entries = list(client.mlsd("/timelapse"))
+            files = [
+                (name, int(facts.get("size", "0")))
+                for name, facts in entries
+                if facts.get("type") == "file" and int(facts.get("size", "0")) > 0
+            ]
+            if not files:
+                raise RuntimeError("printer returned no cloud-backed timelapses")
+            remote_name, expected_size = min(files, key=lambda item: item[1])
+            remote_data = io.BytesIO()
+            client.retrbinary(f"RETR /timelapse/{remote_name}", remote_data.write)
+            if len(remote_data.getvalue()) != expected_size:
+                raise RuntimeError("remote timelapse download size did not match")
+            print(
+                "Cloud-backed FTPS timelapse download succeeded "
+                f"({expected_size} bytes)."
+            )
     finally:
         if uploaded:
             with suppress(ftplib.Error):

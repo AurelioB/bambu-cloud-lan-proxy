@@ -4,13 +4,12 @@
 Bambu Handy ───────────────┐
                            v
 H2C <──────> Bambu Cloud <────> Bambu Gateway + compatibility hook
-                                             ^  |
-                         signed cloud upload |  | raw report / checked request
-                                             |  v
-                                     staged 3MF + Mosquitto TLS :8883
-                                         ^             ^
-                                         | FTPS :990   |
-                                         +── Bambuddy ─+
+                                |            ^  |
+                         media tunnel        |  | raw report / checked request
+                                v            |  v
+                    read-through FTPS <── staged 3MF + Mosquitto TLS :8883
+                              ^                         ^
+                              └──────── Bambuddy ───────┘
 
 H2C RTSPS :322 ──> MediaMTX (on-demand, cert-pinned) ──> TCP ingress :322
                                                                ^
@@ -35,6 +34,15 @@ The FTPS container provides a confined, quota-limited filesystem at
 ZIP-checked when they end in `.3mf`, flushed, then atomically renamed. Listings
 never expose partial/internal files. Both control and `PROT P` data channels
 use the locally generated server certificate.
+
+For printer-resident files, Gateway asks the same official networking plugin
+used by Studio to mint a short-lived authenticated `bambu:///tutk` URL. The
+patched host passes that URL directly to the official `libBambuSource` control
+stream; the URL is never logged, persisted, or returned to FTPS. `LIST_INFO`
+responses are projected into `cache/`, `timelapse/`, and `video/`. A `RETR`
+causes an on-demand `FILE_DOWNLOAD` into `data/remote-cache/`, validates size
+and MD5, streams it over protected FTPS, then asks Gateway to remove it. This
+path is serialized and read-only: FTPS delete and rename affect staging only.
 
 When cloud printing is explicitly enabled, `print.project_file` is never
 forwarded as raw MQTT: its `ftp://` URL would only be meaningful to the local
@@ -83,17 +91,17 @@ There are three unrelated certificate concerns:
 
 ## Deliberate upstream boundaries
 
-The facade can archive only files present in its staged filesystem. The pinned
-official plugin supports cloud upload/print submission but exposes no source
-3MF download primitive, so a Handy-originated job cannot be reconstructed into
-FTPS storage.
+The remote file facade exposes the file categories returned by Studio's media
+API: previous models/jobs, timelapses, and recordings. It does not expose an
+arbitrary remote filesystem, and it intentionally omits remote upload, rename,
+and deletion. Locally staged uploads retain those normal FTPS operations.
 
 The H2C cloud live view is a proprietary TUTK/Agora session rather than RTSPS
 forwarded through Bambu's MQTT broker. Gateway does not expose that video stack.
 The proxy therefore relays only the direct LAN-only liveview endpoint; if the
 printer closes port 322 or leaves the local network, there is no cloud fallback.
 
-The physical printer's FTPS/storage service is likewise unavailable while its
-LAN service ports are closed. The facade can stage and re-serve files locally,
-then use the official cloud upload/dispatch path, but it cannot list or download
-files that exist only on the printer.
+The physical printer's direct FTPS/storage port remains unavailable while its
+LAN service ports are closed. The cloud media tunnel now supplies read-only
+listing and download independently of that port; it is not a general substitute
+for every operation exposed by a printer in native LAN mode.

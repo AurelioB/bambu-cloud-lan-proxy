@@ -9,4 +9,4 @@ if [ ! -s .env ]; then
   exit 1
 fi
 
-exec python3 "$project_dir/scripts/verify_ftps.py"
+exec python3 "$project_dir/scripts/verify_ftps.py" "$@"
