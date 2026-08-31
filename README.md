@@ -7,6 +7,7 @@ turning off Bambu Handy.
 
 ```text
 H2C ↔ Bambu Cloud ↔ Bambu Gateway ↔ local MQTT/TLS + FTPS facade ↔ Bambuddy
+  └──── LAN-only RTSPS camera ──────── local RTSPS :322 ─────────┘
 ```
 
 The H2C stays in normal cloud mode. [Bambu
@@ -21,9 +22,13 @@ reverse proxy Bambu's public broker or place account credentials in Bambuddy.
 - Bambuddy's `pushall`, `get_version`, `get_accessories`, and
   `extrusion_cali_get` queries
 - Optional signed pause, resume, speed, and light controls
+- Optional signed passthrough for the complete MQTT request envelope used by
+  Bambuddy (`full_control` mode)
 - Implicit FTPS on port 990 with protected passive data channels
 - Staged file listing, upload, size, download, rename, and delete operations
 - Bambuddy archive reads for files that were uploaded through this proxy
+- Authenticated RTSPS camera relay on port 322 when the printer's **LAN-only
+  liveview** endpoint is enabled and reachable
 - Optional `project_file` handoff to Gateway's signed cloud-print pipeline,
   including plate, AMS, H2C nozzle mapping, and print-option translation
 - Bambu Handy at the same time, because the printer remains cloud-connected
@@ -35,11 +40,12 @@ dispatch is disabled. FTPS and staged-file/archive access are available without
 enabling printer writes. Cloud printing through Handy or Gateway remains
 available independently.
 
-The physical H2C's cloud camera is not exposed. Bambu's cloud live view uses a
-proprietary TUTK/Agora transport that neither Gateway's plugin host nor
-open-bamboo-networking exposes as a reusable video stream. A fake port 322 would
-make diagnostics green without producing video, so this project leaves it
-closed. Configure an external camera directly in Bambuddy if one is available.
+The camera path is deliberately local: it pulls the printer's RTSPS liveview,
+pins the physical camera certificate, and re-publishes one authenticated stream
+to local clients. It does not proxy Bambu's cloud-video service. Consequently,
+camera access requires the printer to remain reachable on LAN port 322 and the
+**LAN-only liveview** toggle to stay enabled; MQTT status can continue through
+cloud even when the local camera is offline.
 
 ## Quick start
 
@@ -53,7 +59,7 @@ then run:
 
 The first command creates `.env`, an eight-character local access code, a local
 certificate authority, and the staged filesystem. The second builds and starts
-Gateway, the TLS MQTT broker, and the implicit-FTPS service.
+Gateway, the TLS MQTT broker, implicit FTPS, and the RTSPS camera relay.
 
 Open Gateway at `http://127.0.0.1:4844`, then connect the cloud account in
 **Settings → Cloud Account**. Bambu's redirect to `localhost:13618` is expected
@@ -90,11 +96,16 @@ CA. Other clients can obtain the public certificate with:
 
 If Bambuddy is on another machine, set `PROXY_BIND_IP` in `.env` to this
 Docker host's trusted LAN or Tailscale address, rerun `./scripts/init.sh` to
-issue a certificate for that address, and redeploy. Allow TCP 8883, 990, and
-50000-50009 only from the Bambuddy host.
+issue a certificate for that address, and redeploy. Allow TCP 322, 8883, 990,
+and 50000-50009 only from the Bambuddy host.
 
 After deployment, Bambuddy's MQTT and FTPS diagnostics should pass. Its camera
-diagnostic remains a warning for the cloud-only H2C, as described above.
+diagnostic passes whenever the printer's local liveview endpoint is reachable.
+The downstream camera username is `bblp` and it uses the same proxy access code.
+
+Despite Bambuddy's historical wording, the file service is implicit **FTPS**,
+not SSH SFTP. It is a local staging filesystem, not a mirror of the printer's
+internal storage.
 
 ## Direct Bambuddy queue dispatch
 
@@ -140,7 +151,8 @@ Configure the mode in `.env`, then run `docker compose up -d`:
 | --- | --- |
 | `read_only` | Startup/status queries only; default and recommended initially |
 | `controls` | Adds pause, resume, print-speed, and chamber/work light |
-| `unsafe` | Forwards unrecognized request envelopes; protocol development only |
+| `full_control` | Signed passthrough for structurally valid MQTT commands; intended for a trusted Bambuddy instance |
+| `unsafe` | Legacy development mode for unknown envelopes; prefer `full_control` |
 
 Cancel is destructive enough to require a second switch:
 
@@ -148,6 +160,20 @@ Cancel is destructive enough to require a second switch:
 PROXY_MODE=controls
 PROXY_ALLOW_CANCEL=true
 ```
+
+For the closest MQTT approximation to LAN mode, while the printer is idle:
+
+```dotenv
+PROXY_MODE=full_control
+PROXY_ALLOW_CANCEL=true
+PROXY_CLOUD_PRINT_ENABLED=true
+```
+
+`full_control` sends Bambuddy's request envelope through Gateway's official
+network plugin, which performs cloud authentication and signing. It permits
+real motion, heating, G-code, calibration, and other commands supported by the
+cloud service. It cannot make a cloud-rejected or LAN-only firmware operation
+work, so this remains a LAN-shaped hybrid rather than literal firmware LAN mode.
 
 When controls or cloud printing are active, the facade changes only the
 downstream `fun` capability bit so Bambuddy knows the **facade** accepts writes.
@@ -164,9 +190,10 @@ PROXY_PRINTERS=SERIAL_ONE,SERIAL_TWO
 
 ```sh
 docker compose ps
-docker compose logs --tail=200 gateway mqtt ftps
+docker compose logs --tail=200 gateway mqtt ftps camera camera-ingress
 ./scripts/verify-mqtt.sh YOUR_PRINTER_SERIAL
 ./scripts/verify-ftps.sh
+./scripts/verify-camera.sh
 ```
 
 The MQTT verification waits for one real cloud report and sends no printer
@@ -183,8 +210,10 @@ staging and deletes it; it never contacts the physical printer.
 - **Queue upload succeeds but no print starts:** direct dispatch is off by
   default. Check `PROXY_CLOUD_PRINT_ENABLED`, then inspect Gateway logs. A busy
   printer is intentionally refused rather than risking its active job.
-- **Camera check warns:** expected for a cloud-only H2C. Use Bambuddy's external
-  camera setting; the Bambu cloud stream is not available to this bridge.
+- **Camera check fails:** confirm LAN-only liveview is enabled and
+  `CAMERA_UPSTREAM_IP` is current, then test that the Docker host can reach that
+  IP on TCP 322. Status may still work through cloud while this local path is
+  down. If port 322 is unavailable, use Bambuddy's external-camera fallback.
 - **Gateway has no printers:** complete its Bambu cloud sign-in and confirm the
   correct `BAMBU_CLOUD_REGION` (`US` or `CN`).
 
@@ -198,7 +227,8 @@ Bambu's shared private signing material would add both security and maintenance
 risk without helping Bambuddy.
 
 The Compose bootstrap instead creates the only certificate these new endpoints
-need: a private local CA and one server certificate shared by MQTT and FTPS.
+need: a private local CA and one server certificate shared by MQTT, FTPS, and
+RTSPS.
 Runtime containers receive only a copy of the server material; the CA signing
 key is not mounted into them. See [the architecture notes](docs/architecture.md)
 for the separation.

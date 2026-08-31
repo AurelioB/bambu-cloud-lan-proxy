@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+
+FROM bluenviron/mediamtx@sha256:1b029d11049be75630e9b73bb0d5f47b08a7db4eaee89a80bf8f53bc40e56414 AS mediamtx
+
+FROM python:3.13-alpine3.22@sha256:e81548ac35b07a3bd4805f275107592ef458b1e893c0e04d45aedaa19416cca5
+
+ARG PROXY_VERSION="dev"
+LABEL org.opencontainers.image.title="Bambu Cloud LAN Proxy Camera" \
+      org.opencontainers.image.description="Authenticated on-demand RTSPS relay for Bambu LAN liveview" \
+      org.opencontainers.image.version="${PROXY_VERSION}" \
+      org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy"
+
+COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
+COPY src/bambu_cloud_lan_proxy /opt/bambu-cloud-lan-proxy/bambu_cloud_lan_proxy
+
+ENV PYTHONPATH="/opt/bambu-cloud-lan-proxy"
+ENTRYPOINT ["python", "-m", "bambu_cloud_lan_proxy.camera_relay"]

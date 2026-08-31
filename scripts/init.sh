@@ -25,7 +25,7 @@ if grep -q '^PGID=1000$' .env; then
   sed -i "s/^PGID=1000$/PGID=$(id -g)/" .env
 fi
 
-mkdir -p data/gateway data/proxy
+mkdir -p data/gateway data/proxy data/camera
 docker compose run --rm --build bootstrap
 
 echo "Initialization complete. Secrets are in .env and data/ (both ignored by Git)."

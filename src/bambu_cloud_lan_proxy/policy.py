@@ -12,6 +12,7 @@ from .config import ProxyMode
 class Action(StrEnum):
     FORWARD_QUERY = "forward_query"
     FORWARD_CONTROL = "forward_control"
+    FORWARD_SIGNED = "forward_signed"
     CLOUD_PRINT = "cloud_print"
     BLOCK = "block"
 
@@ -59,16 +60,14 @@ SAFE_CONTROLS = frozenset(
 
 CANCEL_COMMAND = ("print", "stop")
 CLOUD_PRINT_COMMAND = ("print", "project_file")
-NAMESPACES = ("pushing", "info", "system", "print")
-
-
 def parse_request(envelope: object) -> ParsedRequest | None:
     if not isinstance(envelope, dict):
         return None
 
     candidates: list[ParsedRequest] = []
-    for namespace in NAMESPACES:
-        body = envelope.get(namespace)
+    for namespace, body in envelope.items():
+        if not isinstance(namespace, str) or not namespace.strip():
+            continue
         if not isinstance(body, dict):
             continue
         command = body.get("command")
@@ -121,8 +120,15 @@ def decide(
             return Decision(Action.FORWARD_CONTROL, request, "cancel explicitly enabled")
         return Decision(Action.BLOCK, request, "cancel is disabled")
 
+    if mode is ProxyMode.FULL_CONTROL:
+        return Decision(
+            Action.FORWARD_SIGNED,
+            request,
+            "full-control signed passthrough",
+        )
+
     if mode is ProxyMode.UNSAFE:
-        return Decision(Action.FORWARD_QUERY, request, "unsafe passthrough mode")
+        return Decision(Action.FORWARD_SIGNED, request, "unsafe passthrough mode")
 
     return Decision(Action.BLOCK, request, "command is not on the controls allowlist")
 

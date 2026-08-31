@@ -13,6 +13,7 @@ class ProxyMode(StrEnum):
 
     READ_ONLY = "read_only"
     CONTROLS = "controls"
+    FULL_CONTROL = "full_control"
     UNSAFE = "unsafe"
 
 

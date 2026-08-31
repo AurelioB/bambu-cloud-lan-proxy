@@ -188,7 +188,8 @@ class CloudLanFacade:
             )
             return
 
-        if decision.action is Action.FORWARD_CONTROL and self._is_duplicate(
+        mutating_actions = {Action.FORWARD_CONTROL, Action.FORWARD_SIGNED}
+        if decision.action in mutating_actions and self._is_duplicate(
             serial, decision, message.payload
         ):
             logger.info("serial=%s ignored duplicate command", serial)

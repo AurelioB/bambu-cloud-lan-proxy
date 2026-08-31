@@ -63,6 +63,32 @@ def test_cancel_requires_separate_opt_in() -> None:
     assert allowed.action is Action.FORWARD_CONTROL
 
 
+def test_full_control_forwards_bambuddy_extended_namespaces_for_signing() -> None:
+    decision = decide(
+        {
+            "xcam": {
+                "command": "xcam_control_set",
+                "module_name": "spaghetti_detector",
+                "enable": True,
+            }
+        },
+        mode=ProxyMode.FULL_CONTROL,
+        allow_cancel=True,
+    )
+
+    assert decision.action is Action.FORWARD_SIGNED
+
+
+def test_full_control_still_requires_cancel_opt_in() -> None:
+    decision = decide(
+        {"print": {"command": "stop"}},
+        mode=ProxyMode.FULL_CONTROL,
+        allow_cancel=False,
+    )
+
+    assert decision.action is Action.BLOCK
+
+
 def test_ambiguous_envelope_is_rejected() -> None:
     decision = decide(
         {

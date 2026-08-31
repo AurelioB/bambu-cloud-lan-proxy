@@ -25,12 +25,14 @@ export_dir=/data/export
 runtime_dir=/data/runtime
 runtime_cert_dir=$runtime_dir/certs
 runtime_auth_dir=$runtime_dir/auth
+camera_state_dir=${PROXY_CAMERA_STATE_DIR:-/camera-state}
 mkdir -p \
   "$cert_dir" \
   "$auth_dir" \
   "$export_dir" \
   "$runtime_cert_dir" \
-  "$runtime_auth_dir"
+  "$runtime_auth_dir" \
+  "$camera_state_dir"
 
 staging_dir=${PROXY_STAGING_DIR:-/staging}
 mkdir -p \
@@ -94,7 +96,9 @@ cp "$auth_dir/passwords" "$runtime_auth_dir/passwords"
 chown -R 0:0 "$cert_dir" "$auth_dir"
 chmod 700 "$cert_dir" "$auth_dir"
 chown -R 1883:1883 "$runtime_dir"
+chown -R 1883:1883 "$camera_state_dir"
 chmod 700 "$runtime_dir" "$runtime_cert_dir" "$runtime_auth_dir"
+chmod 700 "$camera_state_dir"
 chmod 755 "$export_dir"
 chmod 600 "$cert_dir/ca.key" "$cert_dir/server.key" "$auth_dir/passwords"
 chmod 644 "$cert_dir/ca.crt" "$cert_dir/server.crt" "$export_dir/bambu-cloud-lan-proxy-ca.crt"

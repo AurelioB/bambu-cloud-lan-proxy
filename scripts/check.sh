@@ -14,5 +14,5 @@ if [ -z "$python_bin" ]; then
 fi
 
 "$python_bin" -m pytest
-"$python_bin" -m ruff check src tests scripts/verify_ftps.py
+"$python_bin" -m ruff check src tests scripts/verify_ftps.py scripts/verify_camera.py
 docker compose config --quiet

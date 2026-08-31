@@ -11,6 +11,10 @@ H2C <──────> Bambu Cloud <────> Bambu Gateway + compatibilit
                                          ^             ^
                                          | FTPS :990   |
                                          +── Bambuddy ─+
+
+H2C RTSPS :322 ──> MediaMTX (on-demand, cert-pinned) ──> TCP ingress :322
+                                                               ^
+                                                               └── Bambuddy
 ```
 
 Gateway's official network-plugin subprocess owns cloud authentication,
@@ -22,8 +26,9 @@ stable Python boundary in the pinned Gateway image:
 2. The embedded facade subscribes to `device/+/request` on an internal broker.
 3. A fail-closed policy classifies each request.
 4. Read-only requests pass through unchanged. Allowlisted controls are rebuilt
-   with Gateway's own command builders so they receive valid Studio sequence
-   IDs before the official plugin signs and sends them.
+   with Gateway's own command builders. In `full_control`, other structurally
+   valid envelopes pass through unchanged. In both cases, the official plugin
+   owns cloud signing and transmission.
 
 The FTPS container provides a confined, quota-limited filesystem at
 `data/staging/`. Uploads are streamed into hidden partial files, capped,
@@ -52,6 +57,15 @@ that Bambuddy expects from a LAN printer. It is an application-layer facade;
 it does not change the H2C's network mode or expose the physical printer's LAN
 ports.
 
+The camera is the exception because H-series LAN-only liveview remains a direct
+local RTSPS service while cloud pairing is active. An unprivileged MediaMTX
+process uses the physical access code, pins the upstream leaf certificate
+(explicitly or by persistent trust-on-first-use), and pulls only when a client
+requests `/streaming/live/1`. A separate unprivileged byte relay lets Docker
+publish standard port 322 without giving MediaMTX root or low-port capability.
+The downstream side uses the proxy certificate and proxy access code. This
+path is local-only and cannot fall back to Bambu's proprietary cloud video.
+
 ## Certificate boundaries
 
 There are three unrelated certificate concerns:
@@ -60,8 +74,8 @@ There are three unrelated certificate concerns:
   plugin. This project never extracts or redistributes its signing key.
 - **Bambu printer CA:** already bundled by upstream Gateway for direct local
   printer verification. It is not the certificate Bambuddy sees here.
-- **Proxy TLS:** generated locally by the Compose bootstrap and used for both
-  MQTT and FTPS. The CA private key stays under `data/`;
+- **Proxy TLS:** generated locally by the Compose bootstrap and used for MQTT,
+  FTPS, and RTSPS. The CA private key stays under `data/`;
   `scripts/export-ca.sh` exports only its public certificate. The runtime
   containers mount a separate `data/proxy/runtime/` projection with the server
   certificate/key (and, for MQTT, the hashed password database); neither gets
@@ -74,10 +88,12 @@ official plugin supports cloud upload/print submission but exposes no source
 3MF download primitive, so a Handy-originated job cannot be reconstructed into
 FTPS storage.
 
-Likewise, the H2C cloud live view is a proprietary TUTK/Agora session rather
-than RTSPS forwarded through Bambu's MQTT broker. Gateway does not load the
-second proprietary video stack, and open-bamboo-networking documents that it
-can only return a LAN camera URL when a direct IP/access-code route exists.
-This project therefore leaves ports 322/6000 closed instead of presenting a
-nonfunctional camera. Bambuddy's own external-camera support is the usable
-fallback.
+The H2C cloud live view is a proprietary TUTK/Agora session rather than RTSPS
+forwarded through Bambu's MQTT broker. Gateway does not expose that video stack.
+The proxy therefore relays only the direct LAN-only liveview endpoint; if the
+printer closes port 322 or leaves the local network, there is no cloud fallback.
+
+The physical printer's FTPS/storage service is likewise unavailable while its
+LAN service ports are closed. The facade can stage and re-serve files locally,
+then use the official cloud upload/dispatch path, but it cannot list or download
+files that exist only on the printer.

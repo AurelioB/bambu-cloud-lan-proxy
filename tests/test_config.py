@@ -27,6 +27,16 @@ def test_controls_mode_auto_advertises_controls(monkeypatch: pytest.MonkeyPatch)
     assert config.advertise_controls is True
 
 
+def test_full_control_mode_auto_advertises_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLOUD_LAN_PROXY_MODE", "full_control")
+    monkeypatch.setenv("CLOUD_LAN_PROXY_ADVERTISE_CONTROLS", "auto")
+
+    config = ProxyConfig.from_env()
+
+    assert config.mode is ProxyMode.FULL_CONTROL
+    assert config.advertise_controls is True
+
+
 def test_cloud_print_auto_advertises_writable_facade(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

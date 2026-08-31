@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data/proxy:/data
       - ./data/staging:/staging
+      - ./data/camera:/camera-state
     restart: "no"
 
   mqtt:
@@ -81,6 +82,86 @@ services:
         - python
         - -c
         - import socket,ssl; c=ssl._create_unverified_context(); s=c.wrap_socket(socket.socket(),server_hostname='localhost'); s.settimeout(3); s.connect(('127.0.0.1',9990)); assert s.recv(4).startswith(b'220 '); s.close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  camera:
+    build:
+      context: .
+      dockerfile: Dockerfile.camera
+      args:
+        PROXY_VERSION: ${PROXY_VERSION:-dev}
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_healthy
+    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PROXY_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
+      CAMERA_PRINTER_SERIAL: ${CAMERA_PRINTER_SERIAL:-}
+      CAMERA_UPSTREAM_IP: ${CAMERA_UPSTREAM_IP:-}
+      CAMERA_UPSTREAM_PORT: ${CAMERA_UPSTREAM_PORT:-322}
+      CAMERA_UPSTREAM_TLS_FINGERPRINT: ${CAMERA_UPSTREAM_TLS_FINGERPRINT:-}
+      CAMERA_LISTEN_IP: host.docker.internal
+      CAMERA_LISTEN_PORT: "8322"
+    volumes:
+      - ./data/proxy/runtime/certs:/secrets/certs:ro
+      - ./data/gateway/printers.json:/gateway/printers.json:ro
+      - ./data/camera:/state
+    user: "1883:1883"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket,ssl; h=socket.gethostbyname('host.docker.internal'); c=ssl._create_unverified_context(); s=c.wrap_socket(socket.socket(),server_hostname=h); s.settimeout(3); s.connect((h,8322)); s.close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  camera-ingress:
+    image: bambu-cloud-lan-proxy-camera
+    depends_on:
+      camera:
+        condition: service_healthy
+    ports:
+      - "${PROXY_BIND_IP:-127.0.0.2}:322:8322"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TCP_RELAY_UPSTREAM_HOST: host.docker.internal
+      TCP_RELAY_UPSTREAM_PORT: "8322"
+      TCP_RELAY_LISTEN_PORT: "8322"
+    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.tcp_relay"]
+    user: "1883:1883"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket; s=socket.create_connection(('127.0.0.1',8322),3); s.close()
       interval: 15s
       timeout: 5s
       retries: 5
