@@ -1,0 +1,77 @@
+from bambu_cloud_lan_proxy.config import ProxyMode
+from bambu_cloud_lan_proxy.policy import Action, decide, rejection_envelope
+
+
+def test_read_only_allows_bambuddy_startup_queries() -> None:
+    envelopes = [
+        {"pushing": {"command": "pushall"}},
+        {"info": {"command": "get_version", "sequence_id": "1"}},
+        {
+            "print": {
+                "command": "extrusion_cali_get",
+                "nozzle_diameter": "0.4",
+                "sequence_id": "2",
+            }
+        },
+    ]
+
+    for envelope in envelopes:
+        decision = decide(envelope, mode=ProxyMode.READ_ONLY, allow_cancel=False)
+        assert decision.action is Action.FORWARD_QUERY
+
+
+def test_read_only_blocks_control_and_preserves_sequence_in_rejection() -> None:
+    decision = decide(
+        {"print": {"command": "pause", "sequence_id": "42"}},
+        mode=ProxyMode.READ_ONLY,
+        allow_cancel=False,
+    )
+
+    assert not decision.allowed
+    assert rejection_envelope(decision) == {
+        "print": {
+            "command": "pause",
+            "sequence_id": "42",
+            "result": "failed",
+            "reason": "blocked by cloud LAN proxy: proxy is in read-only mode",
+        }
+    }
+
+
+def test_controls_mode_has_narrow_allowlist() -> None:
+    pause = decide(
+        {"print": {"command": "pause"}},
+        mode=ProxyMode.CONTROLS,
+        allow_cancel=False,
+    )
+    arbitrary = decide(
+        {"print": {"command": "gcode_line", "param": "M104 S300"}},
+        mode=ProxyMode.CONTROLS,
+        allow_cancel=False,
+    )
+
+    assert pause.action is Action.FORWARD_CONTROL
+    assert arbitrary.action is Action.BLOCK
+
+
+def test_cancel_requires_separate_opt_in() -> None:
+    envelope = {"print": {"command": "stop"}}
+    denied = decide(envelope, mode=ProxyMode.CONTROLS, allow_cancel=False)
+    allowed = decide(envelope, mode=ProxyMode.CONTROLS, allow_cancel=True)
+
+    assert denied.action is Action.BLOCK
+    assert allowed.action is Action.FORWARD_CONTROL
+
+
+def test_ambiguous_envelope_is_rejected() -> None:
+    decision = decide(
+        {
+            "print": {"command": "pause"},
+            "system": {"command": "ledctrl", "led_mode": "on"},
+        },
+        mode=ProxyMode.UNSAFE,
+        allow_cancel=True,
+    )
+
+    assert decision.action is Action.BLOCK
+    assert decision.request is None

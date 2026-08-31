@@ -1,0 +1,87 @@
+name: bambu-cloud-lan-proxy
+
+services:
+  bootstrap:
+    build:
+      context: .
+      dockerfile: docker/bootstrap.Dockerfile
+    environment:
+      PROXY_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
+      PROXY_BIND_IP: ${PROXY_BIND_IP:-127.0.0.2}
+    volumes:
+      - ./data/proxy:/data
+    restart: "no"
+
+  mqtt:
+    build:
+      context: .
+      dockerfile: docker/mqtt.Dockerfile
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "${PROXY_BIND_IP:-127.0.0.2}:8883:8883"
+    user: "1883:1883"
+    volumes:
+      - ./data/proxy:/mosquitto/secrets:ro
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/version' -C 1 -W 3 >/dev/null
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+      args:
+        PROXY_VERSION: ${PROXY_VERSION:-dev}
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${GATEWAY_BIND_IP:-127.0.0.1}:${GATEWAY_PORT:-4844}:4844"
+    environment:
+      TZ: ${TZ:-UTC}
+      BAMBU_CLOUD_ENABLED: "true"
+      BAMBU_CLOUD_REGION: ${BAMBU_CLOUD_REGION:-US}
+      CLOUD_LAN_PROXY_ENABLED: "true"
+      CLOUD_LAN_PROXY_BROKER_HOST: mqtt
+      CLOUD_LAN_PROXY_BROKER_PORT: "1883"
+      CLOUD_LAN_PROXY_MODE: ${PROXY_MODE:-read_only}
+      CLOUD_LAN_PROXY_ALLOW_CANCEL: ${PROXY_ALLOW_CANCEL:-false}
+      CLOUD_LAN_PROXY_ADVERTISE_CONTROLS: ${PROXY_ADVERTISE_CONTROLS:-auto}
+      CLOUD_LAN_PROXY_PRINTERS: ${PROXY_PRINTERS:-}
+    volumes:
+      - ./data/gateway:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:4844/api/health', timeout=3); urllib.request.urlopen('http://127.0.0.1:4844/api/cloud/auth/status', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s

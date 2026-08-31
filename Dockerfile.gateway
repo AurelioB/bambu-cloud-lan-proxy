@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+
+# Bambu Gateway v3.0.0 (upstream commit 79db09fff4929e9a7537453078031a51b3834c5f).
+# Pinning the digest makes the small compatibility hook fail predictably if
+# Gateway's private APIs change in a later release.
+FROM ghcr.io/leolobato/bambu-gateway@sha256:56073204264aad5eda98ef5e6d82a05316af64d0474de0f26c89a6b67496e145
+
+ARG PROXY_VERSION="dev"
+LABEL org.opencontainers.image.title="Bambu Cloud LAN Proxy" \
+      org.opencontainers.image.description="Local MQTT facade for Bambu Gateway cloud printers" \
+      org.opencontainers.image.version="${PROXY_VERSION}" \
+      org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy"
+
+COPY src/bambu_cloud_lan_proxy /opt/bambu-cloud-lan-proxy/bambu_cloud_lan_proxy
+
+ENV PYTHONPATH="/opt/bambu-cloud-lan-proxy:/app"
+ENTRYPOINT ["python", "-m", "bambu_cloud_lan_proxy.launcher"]
+CMD ["-m", "app", "-c", "/data/printers.json"]

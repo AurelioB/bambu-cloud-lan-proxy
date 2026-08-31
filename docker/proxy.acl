@@ -1,0 +1,3 @@
+user bblp
+topic read device/+/report
+topic readwrite device/+/request
