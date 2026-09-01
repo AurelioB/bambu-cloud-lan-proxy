@@ -38,7 +38,7 @@ index dea833f..937a68d 100644
  // echo — returns params unchanged.  Used as a liveness / round-trip check.
  json method_echo(const json& params) {
    return params;
-@@ -91,6 +97,21 @@ json method_set_user_selected_machine(const json& params) {
+@@ -91,6 +97,48 @@ json method_set_user_selected_machine(const json& params) {
    return {{"rc", loader().set_user_selected_machine(dev_id)}};
  }
  
@@ -57,15 +57,46 @@ index dea833f..937a68d 100644
 +      params.value("max_bytes", std::uint64_t(4) * 1024 * 1024 * 1024));
 +}
 +
++json method_storage_ability(const json& params) {
++  return storage_bridge().ability(loader(), params.at("dev_id").get<std::string>(),
++                                  params.value("api_version", 2));
++}
++
++json method_storage_subfile(const json& params) {
++  return storage_bridge().subfile(
++      loader(), params.at("dev_id").get<std::string>(), params.at("request"),
++      params.at("target_path").get<std::string>(),
++      params.value("max_bytes", std::uint64_t(128) * 1024 * 1024));
++}
++
++json method_storage_delete(const json& params) {
++  return storage_bridge().remove(
++      loader(), params.at("dev_id").get<std::string>(),
++      params.at("paths").get<std::vector<std::string>>());
++}
++
++json method_storage_upload(const json& params) {
++  return storage_bridge().upload(
++      loader(), params.at("dev_id").get<std::string>(),
++      params.value("storage", std::string()),
++      params.at("path").get<std::string>(),
++      params.at("source_path").get<std::string>(),
++      params.value("max_bytes", std::uint64_t(1024) * 1024 * 1024));
++}
++
  // bridge.poll_events — drain all queued plugin callback events.
  // Returns: {"events": [...]} where each element is an event JSON object.
  // The queue is cleared atomically; calling again returns only new events.
-@@ -356,6 +377,8 @@ json dispatch_method(const std::string& method, const json& params) {
+@@ -356,6 +404,12 @@ json dispatch_method(const std::string& method, const json& params) {
    if (method == "get_my_token")        return method_get_my_token(params);
    if (method == "get_user_print_info") return method_get_user_print_info(params);
    if (method == "set_user_selected_machine") return method_set_user_selected_machine(params);
 +  if (method == "storage.list")        return method_storage_list(params);
 +  if (method == "storage.download")    return method_storage_download(params);
++  if (method == "storage.ability")     return method_storage_ability(params);
++  if (method == "storage.subfile")     return method_storage_subfile(params);
++  if (method == "storage.delete")      return method_storage_delete(params);
++  if (method == "storage.upload")      return method_storage_upload(params);
    if (method == "bridge.poll_events")  return method_bridge_poll_events(params);
    if (method == "_test_push_event")    return method_test_push_event(params);
    if (method == "connect_server")      return method_connect_server(params);

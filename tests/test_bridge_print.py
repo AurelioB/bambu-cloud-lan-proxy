@@ -53,6 +53,7 @@ def _config(tmp_path: Path) -> ProxyConfig:
         mode=ProxyMode.READ_ONLY,
         allow_cancel=False,
         cloud_print_enabled=True,
+        remote_reprint_enabled=False,
         cloud_print_wait_seconds=1,
         cloud_print_progress_timeout=15,
         cloud_print_max_bytes=1024 * 1024,

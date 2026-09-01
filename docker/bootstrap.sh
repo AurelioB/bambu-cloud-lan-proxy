@@ -27,6 +27,7 @@ runtime_cert_dir=$runtime_dir/certs
 runtime_auth_dir=$runtime_dir/auth
 camera_state_dir=${PROXY_CAMERA_STATE_DIR:-/camera-state}
 remote_cache_dir=${PROXY_REMOTE_CACHE_DIR:-/remote-cache}
+local_status_dir=${PROXY_LOCAL_STATUS_DIR:-/local-status}
 mkdir -p \
   "$cert_dir" \
   "$auth_dir" \
@@ -35,6 +36,7 @@ mkdir -p \
   "$runtime_auth_dir" \
   "$camera_state_dir" \
   "$remote_cache_dir"
+mkdir -p "$local_status_dir"
 
 staging_dir=${PROXY_STAGING_DIR:-/staging}
 mkdir -p \
@@ -100,6 +102,7 @@ chown -R 0:0 "$cert_dir" "$auth_dir"
 chmod 700 "$cert_dir" "$auth_dir"
 chown -R 1883:1883 "$runtime_dir"
 chown -R 1883:1883 "$camera_state_dir"
+chmod 1777 "$local_status_dir"
 chmod 700 "$runtime_dir" "$runtime_cert_dir" "$runtime_auth_dir"
 chmod 700 "$camera_state_dir"
 chmod 1777 "$remote_cache_dir"

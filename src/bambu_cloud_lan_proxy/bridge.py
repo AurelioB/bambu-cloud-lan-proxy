@@ -108,6 +108,17 @@ class CloudLanFacade:
         serial = serial.upper()
         if serial not in self._clients or self._mqtt is None:
             return
+        local_state = Path(
+            os.getenv("CLOUD_LAN_PROXY_LOCAL_STATUS_STATE_DIR", "/local-status")
+        ) / f"{serial}.local"
+        try:
+            fresh_for = float(
+                os.getenv("CLOUD_LAN_PROXY_LOCAL_STATUS_FRESH_SECONDS", "20")
+            )
+            if time.time() - local_state.stat().st_mtime < fresh_for:
+                return
+        except OSError:
+            pass
         try:
             payload = prepare_report(raw, controls=self.config.advertise_controls)
         except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError):
@@ -153,6 +164,7 @@ class CloudLanFacade:
             mode=self.config.mode,
             allow_cancel=self.config.allow_cancel,
             allow_cloud_print=self.config.cloud_print_enabled,
+            allow_remote_reprint=self.config.remote_reprint_enabled,
         )
         if not decision.allowed:
             self._publish_rejection(serial, decision)

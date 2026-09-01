@@ -13,6 +13,7 @@ services:
       - ./data/staging:/staging
       - ./data/remote-cache:/remote-cache
       - ./data/camera:/camera-state
+      - ./data/local-status:/local-status
     restart: "no"
 
   mqtt:
@@ -67,8 +68,11 @@ services:
       FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
       FTPS_REMOTE_API_URL: http://gateway:4844/internal/cloud-lan-proxy/storage
       FTPS_REMOTE_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
+      FTPS_REMOTE_SERIALS: ${PROXY_PRINTERS:-}
       FTPS_REMOTE_CACHE_DIR: /remote-cache
       FTPS_REMOTE_CATALOG_TTL: ${PROXY_STORAGE_CATALOG_TTL:-30}
+      FTPS_REMOTE_ALLOW_UPLOAD: ${PROXY_STORAGE_ALLOW_UPLOAD:-false}
+      FTPS_REMOTE_ALLOW_DELETE: ${PROXY_STORAGE_ALLOW_DELETE:-false}
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
     volumes:
       - ./data/proxy/runtime/certs:/secrets/certs:ro
@@ -139,6 +143,76 @@ services:
       retries: 5
       start_period: 30s
 
+  native-files:
+    image: bambu-cloud-lan-proxy-ftps
+    depends_on:
+      gateway:
+        condition: service_healthy
+    ports:
+      - "${PROXY_BIND_IP:-127.0.0.2}:6000:6000"
+    environment:
+      FTPS_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
+      FTPS_ROOT: /staging
+      FTPS_CERT_FILE: /secrets/certs/server.crt
+      FTPS_KEY_FILE: /secrets/certs/server.key
+      FTPS_MAX_UPLOAD_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
+      FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
+      FTPS_REMOTE_API_URL: http://gateway:4844/internal/cloud-lan-proxy/storage
+      FTPS_REMOTE_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
+      FTPS_REMOTE_SERIALS: ${PROXY_PRINTERS:-}
+      FTPS_REMOTE_CACHE_DIR: /remote-cache
+      FTPS_REMOTE_CATALOG_TTL: ${PROXY_STORAGE_CATALOG_TTL:-30}
+      NATIVE_FILES_PORT: "6000"
+      LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/proxy/runtime/certs:/secrets/certs:ro
+      - ./data/staging:/staging
+      - ./data/remote-cache:/remote-cache
+    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.native_files"]
+    user: "1883:1883"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket,ssl; c=ssl._create_unverified_context(); s=c.wrap_socket(socket.socket(),server_hostname='localhost'); s.settimeout(3); s.connect(('127.0.0.1',6000)); s.close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  discovery:
+    image: bambu-cloud-lan-proxy-ftps
+    depends_on:
+      native-files:
+        condition: service_healthy
+    network_mode: host
+    environment:
+      DISCOVERY_PRINTER_IP: ${PROXY_BIND_IP:-127.0.0.2}
+      DISCOVERY_PRINTER_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
+      DISCOVERY_PRINTER_MODEL: ${PROXY_DISCOVERY_MODEL:-H2C}
+      DISCOVERY_PRINTER_NAME: ${PROXY_DISCOVERY_NAME:-Bambu Cloud LAN Proxy}
+      DISCOVERY_TARGET: ${PROXY_DISCOVERY_TARGET:-127.0.0.1}
+      LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.discovery"]
+    user: "1883:1883"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   camera-ingress:
     image: bambu-cloud-lan-proxy-camera
     depends_on:
@@ -173,6 +247,31 @@ services:
       retries: 5
       start_period: 10s
 
+  local-status:
+    image: bambu-cloud-lan-proxy-gateway
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    environment:
+      LOCAL_STATUS_PRINTER_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
+      LOCAL_STATUS_UPSTREAM_IP: ${CAMERA_UPSTREAM_IP:-}
+      LOCAL_STATUS_BROKER_HOST: mqtt
+      LOCAL_STATUS_STATE_DIR: /state
+      LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/gateway/printers.json:/gateway/printers.json:ro
+      - ./data/local-status:/state
+    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.local_status"]
+    user: "${PUID:-1000}:${PGID:-1000}"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   gateway:
     build:
       context: .
@@ -197,6 +296,7 @@ services:
       CLOUD_LAN_PROXY_MODE: ${PROXY_MODE:-read_only}
       CLOUD_LAN_PROXY_ALLOW_CANCEL: ${PROXY_ALLOW_CANCEL:-false}
       CLOUD_LAN_PROXY_CLOUD_PRINT_ENABLED: ${PROXY_CLOUD_PRINT_ENABLED:-false}
+      CLOUD_LAN_PROXY_REMOTE_REPRINT_ENABLED: ${PROXY_STORAGE_ALLOW_REPRINT:-false}
       CLOUD_LAN_PROXY_CLOUD_PRINT_WAIT_SECONDS: ${PROXY_CLOUD_PRINT_WAIT_SECONDS:-900}
       CLOUD_LAN_PROXY_CLOUD_PRINT_PROGRESS_TIMEOUT: ${PROXY_CLOUD_PRINT_PROGRESS_TIMEOUT:-900}
       CLOUD_LAN_PROXY_CLOUD_PRINT_MAX_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
@@ -206,10 +306,15 @@ services:
       CLOUD_LAN_PROXY_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
       CLOUD_LAN_PROXY_REMOTE_CACHE_DIR: /remote-cache
       CLOUD_LAN_PROXY_REMOTE_MAX_MB: ${PROXY_STORAGE_MAX_DOWNLOAD_MB:-4096}
+      CLOUD_LAN_PROXY_REMOTE_SUBFILE_MAX_MB: ${PROXY_STORAGE_SUBFILE_MAX_MB:-256}
+      CLOUD_LAN_PROXY_STORAGE_ALLOW_UPLOAD: ${PROXY_STORAGE_ALLOW_UPLOAD:-false}
+      CLOUD_LAN_PROXY_STORAGE_ALLOW_DELETE: ${PROXY_STORAGE_ALLOW_DELETE:-false}
+      CLOUD_LAN_PROXY_LOCAL_STATUS_STATE_DIR: /local-status
     volumes:
       - ./data/gateway:/data
       - ./data/staging:/staging:ro
       - ./data/remote-cache:/remote-cache
+      - ./data/local-status:/local-status:ro
     restart: unless-stopped
     stop_grace_period: 30s
     read_only: true

@@ -127,3 +127,27 @@ def test_cloud_print_needs_its_own_opt_in_even_in_unsafe_mode() -> None:
     assert denied.action is Action.BLOCK
     assert denied.reason == "cloud print is disabled"
     assert allowed.action is Action.CLOUD_PRINT
+
+
+def test_printer_resident_reprint_requires_full_control_and_its_own_gate() -> None:
+    envelope = {
+        "print": {
+            "command": "project_file",
+            "sequence_id": "12",
+            "url": "file:///cache/existing.gcode.3mf",
+        }
+    }
+    denied = decide(
+        envelope,
+        mode=ProxyMode.FULL_CONTROL,
+        allow_cancel=False,
+        allow_remote_reprint=False,
+    )
+    allowed = decide(
+        envelope,
+        mode=ProxyMode.FULL_CONTROL,
+        allow_cancel=False,
+        allow_remote_reprint=True,
+    )
+    assert denied.action is Action.BLOCK
+    assert allowed.action is Action.FORWARD_SIGNED

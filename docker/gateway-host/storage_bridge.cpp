@@ -9,7 +9,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -94,8 +96,13 @@ class Session {
   Session(const Session&) = delete;
   Session& operator=(const Session&) = delete;
 
-  void request(int command, const json& request) {
+  void request(int command, const json& request,
+               const unsigned char* data = nullptr, std::size_t data_size = 0) {
     std::string body = json{{"cmdtype", command}, {"sequence", 1}, {"req", request}}.dump();
+    if (data_size) {
+      body += "\n\n";
+      body.append(reinterpret_cast<const char*>(data), data_size);
+    }
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     int rc;
     do {
@@ -153,6 +160,26 @@ void validate_remote(const std::string& value) {
   }
 }
 
+void validate_storage(const std::string& value) {
+  if (value.size() > 32 || !std::all_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '-';
+      }))
+    throw std::runtime_error("invalid storage selector");
+}
+
+std::filesystem::path confined_path(const char* root_name,
+                                    const std::string& value) {
+  const char* root_env = std::getenv(root_name);
+  std::filesystem::path root(root_env ? root_env : "");
+  if (root.empty()) throw std::runtime_error(std::string(root_name) + " is not configured");
+  std::filesystem::path target = std::filesystem::weakly_canonical(value);
+  std::filesystem::path canonical_root = std::filesystem::weakly_canonical(root);
+  auto root_text = canonical_root.string() + "/";
+  if (target.string().rfind(root_text, 0) != 0)
+    throw std::runtime_error("path escapes configured root");
+  return target;
+}
+
 std::string md5_file(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("cannot reopen downloaded file");
@@ -188,8 +215,7 @@ json StorageBridge::list(PluginLoader& loader, const std::string& dev_id,
   std::lock_guard<std::mutex> guard(mutex_);
   if (type != "timelapse" && type != "video" && type != "model")
     throw std::runtime_error("invalid storage type");
-  if (!storage.empty() && storage != "internal")
-    throw std::runtime_error("invalid storage selector");
+  validate_storage(storage);
   Session session(loader.get_camera_url(dev_id));
   json request{{"type", type}, {"api_version", 2}, {"notify", "DETAIL"}};
   if (!storage.empty()) request["storage"] = storage;
@@ -218,13 +244,8 @@ json StorageBridge::download(PluginLoader& loader, const std::string& dev_id,
   std::lock_guard<std::mutex> guard(mutex_);
   validate_remote(remote_path);
   validate_remote(remote_name);
-  const char* root_env = std::getenv("CLOUD_LAN_PROXY_REMOTE_CACHE_DIR");
-  std::filesystem::path root(root_env ? root_env : "");
-  if (root.empty()) throw std::runtime_error("remote cache directory is not configured");
-  std::filesystem::path target = std::filesystem::weakly_canonical(target_path);
-  std::filesystem::path canonical_root = std::filesystem::weakly_canonical(root);
-  auto root_text = canonical_root.string() + "/";
-  if (target.string().rfind(root_text, 0) != 0) throw std::runtime_error("target escapes remote cache");
+  std::filesystem::path target = confined_path(
+      "CLOUD_LAN_PROXY_REMOTE_CACHE_DIR", target_path);
   std::filesystem::create_directories(target.parent_path());
   std::filesystem::path partial = target;
   partial += ".part";
@@ -276,6 +297,132 @@ json StorageBridge::download(PluginLoader& loader, const std::string& dev_id,
     std::filesystem::remove(partial, ignored);
     throw;
   }
+}
+
+json StorageBridge::ability(PluginLoader& loader, const std::string& dev_id,
+                            int api_version) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (api_version < 1 || api_version > 10)
+    throw std::runtime_error("invalid media API version");
+  Session session(loader.get_camera_url(dev_id));
+  session.request(7, {{"peer", "studio"}, {"api_version", api_version}});
+  auto frame = session.response(std::chrono::steady_clock::now() + std::chrono::seconds(30));
+  int result = frame.first.value("result", -1);
+  if (result != 0) throw std::runtime_error("printer ability failed result=" + std::to_string(result));
+  return {{"storage", reply_of(frame.first).value("storage", json::array())}};
+}
+
+json StorageBridge::subfile(PluginLoader& loader, const std::string& dev_id,
+                            const json& request, const std::string& target_path,
+                            std::uint64_t max_bytes) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (!request.is_object()) throw std::runtime_error("invalid subfile request");
+  if (request.contains("paths")) {
+    if (!request["paths"].is_array() || request["paths"].size() > 64)
+      throw std::runtime_error("invalid subfile paths");
+    for (const auto& path : request["paths"]) {
+      if (!path.is_string()) throw std::runtime_error("invalid subfile path");
+      validate_remote(path.get<std::string>());
+    }
+  } else {
+    validate_remote(request.value("path", std::string()));
+    validate_remote(request.value("name", std::string()));
+  }
+  std::filesystem::path target = confined_path(
+      "CLOUD_LAN_PROXY_REMOTE_CACHE_DIR", target_path);
+  std::filesystem::path partial = target;
+  partial += ".part";
+  std::ofstream output(partial, std::ios::binary | std::ios::trunc);
+  if (!output) throw std::runtime_error("cannot create subfile target");
+  try {
+    Session session(loader.get_camera_url(dev_id));
+    session.request(2, request);
+    std::uint64_t written = 0;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+    for (;;) {
+      auto frame = session.response(deadline);
+      int result = frame.first.value("result", -1);
+      const json& reply = reply_of(frame.first);
+      std::uint64_t size = reply.value("size", frame.second.size());
+      if (size != frame.second.size() || written + size > max_bytes)
+        throw std::runtime_error("invalid or oversized subfile frame");
+      output.write(reinterpret_cast<const char*>(frame.second.data()), frame.second.size());
+      if (!output) throw std::runtime_error("subfile write failed");
+      written += size;
+      if (result == 0) break;
+      if (result != 1) throw std::runtime_error("printer subfile failed result=" + std::to_string(result));
+    }
+    output.close();
+    std::filesystem::rename(partial, target);
+    return {{"path", target.string()}, {"size", written}};
+  } catch (...) {
+    output.close();
+    std::error_code ignored;
+    std::filesystem::remove(partial, ignored);
+    throw;
+  }
+}
+
+json StorageBridge::remove(PluginLoader& loader, const std::string& dev_id,
+                           const std::vector<std::string>& paths) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (paths.empty() || paths.size() > 100)
+    throw std::runtime_error("invalid delete request");
+  for (const auto& path : paths) validate_remote(path);
+  Session session(loader.get_camera_url(dev_id));
+  session.request(3, {{"paths", paths}});
+  auto frame = session.response(std::chrono::steady_clock::now() + std::chrono::seconds(60));
+  int result = frame.first.value("result", -1);
+  if (result != 0) throw std::runtime_error("printer delete failed result=" + std::to_string(result));
+  return {{"deleted", paths.size()}};
+}
+
+json StorageBridge::upload(PluginLoader& loader, const std::string& dev_id,
+                           const std::string& storage,
+                           const std::string& remote_path,
+                           const std::string& source_path,
+                           std::uint64_t max_bytes) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  validate_storage(storage);
+  validate_remote(remote_path);
+  std::filesystem::path source = confined_path(
+      "CLOUD_LAN_PROXY_STAGING_DIR", source_path);
+  if (!std::filesystem::is_regular_file(source))
+    throw std::runtime_error("upload source is unavailable");
+  std::uint64_t total = std::filesystem::file_size(source);
+  if (total == 0 || total > max_bytes)
+    throw std::runtime_error("upload source is empty or exceeds limit");
+  std::string md5 = md5_file(source);
+  Session session(loader.get_camera_url(dev_id));
+  session.request(5, {{"type", "model"}, {"storage", storage},
+                      {"path", remote_path}, {"total", total}});
+  auto init = session.response(std::chrono::steady_clock::now() + std::chrono::seconds(60));
+  int init_result = init.first.value("result", -1);
+  if (init_result != 1 && init_result != 19)
+    throw std::runtime_error("printer upload init failed result=" + std::to_string(init_result));
+  const json& reply = reply_of(init.first);
+  std::uint64_t chunk_size = reply.value("chunk_size", std::uint64_t(255)) * 1024;
+  std::uint64_t offset = reply.value("offset", std::uint64_t(0));
+  if (chunk_size == 0 || chunk_size > 1024 * 1024 || offset > total)
+    throw std::runtime_error("printer returned invalid upload parameters");
+  std::ifstream input(source, std::ios::binary);
+  input.seekg(static_cast<std::streamoff>(offset));
+  std::vector<unsigned char> buffer(chunk_size);
+  std::uint64_t frag_id = offset / chunk_size;
+  while (offset < total) {
+    std::uint64_t wanted = std::min<std::uint64_t>(chunk_size, total - offset);
+    input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(wanted));
+    if (static_cast<std::uint64_t>(input.gcount()) != wanted)
+      throw std::runtime_error("upload source read failed");
+    json req{{"frag_id", frag_id++}, {"offset", offset}, {"size", wanted}};
+    if (offset + wanted == total) req["file_md5"] = md5;
+    session.request(5, req, buffer.data(), wanted);
+    offset += wanted;
+  }
+  auto done = session.response(std::chrono::steady_clock::now() + std::chrono::minutes(5));
+  int result = done.first.value("result", -1);
+  if (result != 0) throw std::runtime_error("printer upload failed result=" + std::to_string(result));
+  return {{"uploaded", remote_path}, {"size", total}, {"md5", md5}};
 }
 
 }  // namespace bambu_host

@@ -91,6 +91,7 @@ def decide(
     mode: ProxyMode,
     allow_cancel: bool,
     allow_cloud_print: bool = False,
+    allow_remote_reprint: bool = False,
 ) -> Decision:
     request = parse_request(envelope)
     if request is None:
@@ -105,6 +106,17 @@ def decide(
     # through the dedicated signed cloud-upload path or fail closed, including
     # in unsafe mode.
     if command_key == CLOUD_PRINT_COMMAND:
+        url = str(request.body.get("url", ""))
+        if (
+            url.startswith("file:///")
+            and allow_remote_reprint
+            and mode in {ProxyMode.FULL_CONTROL, ProxyMode.UNSAFE}
+        ):
+            return Decision(
+                Action.FORWARD_SIGNED,
+                request,
+                "printer-resident reprint explicitly enabled",
+            )
         if allow_cloud_print:
             return Decision(Action.CLOUD_PRINT, request, "cloud print explicitly enabled")
         return Decision(Action.BLOCK, request, "cloud print is disabled")

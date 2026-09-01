@@ -6,8 +6,9 @@ Bambu Lab H2C from [Bambuddy](https://github.com/maziggy/bambuddy) without
 turning off Bambu Handy.
 
 ```text
-H2C ↔ Bambu Cloud ↔ Bambu Gateway ↔ local MQTT/TLS + FTPS facade ↔ Bambuddy
-  └──── LAN-only RTSPS camera ──────── local RTSPS :322 ─────────┘
+H2C ↔ Bambu Cloud ↔ Bambu Gateway ↔ local MQTT/TLS + file facade ↔ clients
+ ├──── read-only LAN MQTT (preferred while reachable) ─────────────┤
+ └──── LAN-only RTSPS camera ───────── local RTSPS :322 ──────────┘
 ```
 
 The H2C stays in normal cloud mode. [Bambu
@@ -18,7 +19,8 @@ reverse proxy Bambu's public broker or place account credentials in Bambuddy.
 
 ## What works
 
-- Raw H2C status, temperatures, progress, AMS, errors, and version reports
+- Local-first, certificate-pinned read-only H2C telemetry with automatic cloud
+  fallback (temperatures, progress, AMS, errors, versions, and task state)
 - Bambuddy's `pushall`, `get_version`, `get_accessories`, and
   `extrusion_cali_get` queries
 - Optional signed pause, resume, speed, and light controls
@@ -28,6 +30,12 @@ reverse proxy Bambu's public broker or place account credentials in Bambuddy.
 - Staged file listing, upload, size, download, rename, and delete operations
 - Read-through browsing and downloads of the printer's previous jobs,
   timelapses, and recordings through the official cloud media tunnel
+- Studio-compatible TLS file service on port 6000: media ability discovery,
+  lists, downloads, 3MF metadata/thumbnails, cancellation, guarded upload and
+  delete, and change notification
+- Optional physical-storage upload/delete and existing-file reprint, each
+  protected by its own configuration gate
+- Bambu SSDP-shaped discovery and per-serial FTPS namespaces
 - Bambuddy archive reads for both staged files and files already on the printer
 - Authenticated RTSPS camera relay on port 322 when the printer's **LAN-only
   liveview** endpoint is enabled and reachable
@@ -46,8 +54,8 @@ The camera path is deliberately local: it pulls the printer's RTSPS liveview,
 pins the physical camera certificate, and re-publishes one authenticated stream
 to local clients. It does not proxy Bambu's cloud-video service. Consequently,
 camera access requires the printer to remain reachable on LAN port 322 and the
-**LAN-only liveview** toggle to stay enabled; MQTT status can continue through
-cloud even when the local camera is offline.
+**LAN-only liveview** toggle to stay enabled. The proprietary cloud camera path
+is not re-published by this project.
 
 ## Quick start
 
@@ -98,8 +106,8 @@ CA. Other clients can obtain the public certificate with:
 
 If Bambuddy is on another machine, set `PROXY_BIND_IP` in `.env` to this
 Docker host's trusted LAN or Tailscale address, rerun `./scripts/init.sh` to
-issue a certificate for that address, and redeploy. Allow TCP 322, 8883, 990,
-and 50000-50009 only from the Bambuddy host.
+issue a certificate for that address, and redeploy. Allow TCP 322, 6000, 8883,
+990, and 50000-50009 only from trusted clients.
 
 After deployment, Bambuddy's MQTT and FTPS diagnostics should pass. Its camera
 diagnostic passes whenever the printer's local liveview endpoint is reachable.
@@ -111,7 +119,19 @@ not SSH SFTP. Local files and uploads live in `data/staging/`. The standard
 reported by the printer through Studio's official cloud media tunnel. A remote
 file is downloaded only when a client retrieves it, validated by size and the
 printer-provided MD5, then removed from the transient cache. Local files win a
-same-name collision. Delete/rename commands never mutate a remote printer file.
+same-name collision. The default keeps printer storage read-only. Enable
+physical mutations only for trusted local clients:
+
+```dotenv
+PROXY_STORAGE_ALLOW_UPLOAD=true
+PROXY_STORAGE_ALLOW_DELETE=true
+PROXY_STORAGE_ALLOW_REPRINT=true
+```
+
+With upload enabled, `STOR /cache/<name>` and native port-6000 uploads mirror
+the validated file into printer storage. Delete can remove a remote-only entry.
+Reprint accepts a printer-resident `file:///` job and additionally requires
+`PROXY_MODE=full_control`.
 
 Enable this for one printer with:
 
@@ -121,6 +141,10 @@ PROXY_STORAGE_PRINTER_SERIAL=YOUR_SERIAL
 
 The cloud file path does not require Developer Mode or physical LAN-mode ports.
 It does require the printer and Gateway cloud session to be online.
+
+For multiple allowed printers, FTPS adds
+`/printers/<serial>/{cache,timelapse,video}`. The primary printer also retains
+the standard paths Bambuddy expects.
 
 ## Direct Bambuddy queue dispatch
 
@@ -210,6 +234,7 @@ docker compose logs --tail=200 gateway mqtt ftps camera camera-ingress
 ./scripts/verify-ftps.sh
 ./scripts/verify-ftps.sh --remote
 ./scripts/verify-camera.sh
+./scripts/verify-native.sh
 ```
 
 The MQTT verification waits for one real cloud report and sends no printer

@@ -16,6 +16,11 @@ H2C RTSPS :322 ──> MediaMTX (on-demand, cert-pinned) ──> TCP ingress :32
                                                                └── Bambuddy
 ```
 
+A separate read-only client also attempts the printer's local MQTT/TLS port.
+It pins that endpoint's certificate and republishes only report messages. A
+fresh heartbeat makes the Gateway hook suppress duplicate cloud reports; if
+LAN telemetry stops, cloud reporting resumes automatically.
+
 Gateway's official network-plugin subprocess owns cloud authentication,
 subscription, command signing, and token refresh. This project patches one
 stable Python boundary in the pinned Gateway image:
@@ -41,8 +46,10 @@ patched host passes that URL directly to the official `libBambuSource` control
 stream; the URL is never logged, persisted, or returned to FTPS. `LIST_INFO`
 responses are projected into `cache/`, `timelapse/`, and `video/`. A `RETR`
 causes an on-demand `FILE_DOWNLOAD` into `data/remote-cache/`, validates size
-and MD5, streams it over protected FTPS, then asks Gateway to remove it. This
-path is serialized and read-only: FTPS delete and rename affect staging only.
+and MD5, streams it over protected FTPS, then asks Gateway to remove it. The
+same bridge supports ability, sub-file, upload, delete, and cancel operations.
+Remote writes are separately gated. A native TLS port-6000 facade translates
+BambuTunnelLocal framing and emits a list-change notice after mutations.
 
 When cloud printing is explicitly enabled, `print.project_file` is never
 forwarded as raw MQTT: its `ftp://` URL would only be meaningful to the local
@@ -93,15 +100,15 @@ There are three unrelated certificate concerns:
 
 The remote file facade exposes the file categories returned by Studio's media
 API: previous models/jobs, timelapses, and recordings. It does not expose an
-arbitrary remote filesystem, and it intentionally omits remote upload, rename,
-and deletion. Locally staged uploads retain those normal FTPS operations.
+arbitrary remote filesystem. Physical upload and deletion are explicit
+opt-ins; rename remains a local staging operation.
 
 The H2C cloud live view is a proprietary TUTK/Agora session rather than RTSPS
 forwarded through Bambu's MQTT broker. Gateway does not expose that video stack.
 The proxy therefore relays only the direct LAN-only liveview endpoint; if the
 printer closes port 322 or leaves the local network, there is no cloud fallback.
 
-The physical printer's direct FTPS/storage port remains unavailable while its
-LAN service ports are closed. The cloud media tunnel now supplies read-only
-listing and download independently of that port; it is not a general substitute
-for every operation exposed by a printer in native LAN mode.
+The port-6000 facade emulates the documented file-browser subset, not every
+firmware-private service sharing that port. Stock Studio may also require its
+own trusted Bambu certificate chain; custom clients can trust the public proxy
+CA exported by `scripts/export-ca.sh`.

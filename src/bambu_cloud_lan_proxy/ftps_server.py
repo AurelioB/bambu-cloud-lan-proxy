@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from .remote_storage import RemoteFile, RemoteStorageClient
+from .remote_storage import RemoteFile, RemoteStorageClient, RemoteStorageRouter
 
 logger = logging.getLogger("bambu.cloud_lan_proxy.ftps")
 _ACCESS_CODE_RE = re.compile(r"[A-Za-z0-9]{8}\Z")
@@ -66,8 +66,11 @@ class FTPSConfig:
     idle_timeout: float
     remote_api_url: str = ""
     remote_serial: str = ""
+    remote_serials: tuple[str, ...] = ()
     remote_cache_dir: Path = Path("/remote-cache")
     remote_catalog_ttl: float = 30
+    remote_allow_upload: bool = False
+    remote_allow_delete: bool = False
 
     @classmethod
     def from_env(cls) -> FTPSConfig:
@@ -106,6 +109,16 @@ class FTPSConfig:
         if remote_catalog_ttl <= 0:
             raise ValueError("FTPS_REMOTE_CATALOG_TTL must be positive")
 
+        remote_serial = os.getenv("FTPS_REMOTE_SERIAL", "").strip().upper()
+        remote_serials = tuple(
+            dict.fromkeys(
+                serial.strip().upper()
+                for serial in (
+                    os.getenv("FTPS_REMOTE_SERIALS", "") or remote_serial
+                ).split(",")
+                if serial.strip()
+            )
+        )
         return cls(
             bind_host=os.getenv("FTPS_BIND_HOST", "0.0.0.0"),  # nosec B104
             port=port,
@@ -120,9 +133,16 @@ class FTPSConfig:
             max_total_bytes=max_total_mb * 1024 * 1024,
             idle_timeout=idle_timeout,
             remote_api_url=os.getenv("FTPS_REMOTE_API_URL", "").strip(),
-            remote_serial=os.getenv("FTPS_REMOTE_SERIAL", "").strip().upper(),
+            remote_serial=remote_serial or (remote_serials[0] if remote_serials else ""),
+            remote_serials=remote_serials,
             remote_cache_dir=Path(os.getenv("FTPS_REMOTE_CACHE_DIR", "/remote-cache")),
             remote_catalog_ttl=remote_catalog_ttl,
+            remote_allow_upload=os.getenv(
+                "FTPS_REMOTE_ALLOW_UPLOAD", "false"
+            ).lower() in {"1", "true", "yes", "on"},
+            remote_allow_delete=os.getenv(
+                "FTPS_REMOTE_ALLOW_DELETE", "false"
+            ).lower() in {"1", "true", "yes", "on"},
         )
 
 
@@ -134,6 +154,7 @@ class StagingStore:
         self.root_resolved = config.root.resolve()
         self.max_upload_bytes = config.max_upload_bytes
         self.max_total_bytes = config.max_total_bytes
+        self.remote_serials = config.remote_serials
         self._commit_lock = asyncio.Lock()
 
     def initialize(self) -> None:
@@ -147,6 +168,11 @@ class StagingStore:
             "data/Metadata",
         ):
             (self.root / relative).mkdir(parents=True, exist_ok=True)
+        for serial in self.remote_serials:
+            for relative in ("cache", "timelapse", "video"):
+                (self.root / "printers" / serial / relative).mkdir(
+                    parents=True, exist_ok=True
+                )
         cutoff = time.time() - 24 * 60 * 60
         for path in self.root.rglob(".upload-*.part"):
             try:
@@ -547,6 +573,14 @@ class FTPSSession:
                 with zipfile.ZipFile(partial) as archive:
                     archive.infolist()
             await self.store.commit(partial, destination)
+            if (
+                self.config.remote_allow_upload
+                and self.server.remote.enabled
+                and virtual.parent == PurePosixPath("/cache")
+            ):
+                await self.server.remote.upload(
+                    destination, path=virtual.name, storage="emmc"
+                )
         except Exception as exc:
             failure = exc
             partial.unlink(missing_ok=True)
@@ -653,13 +687,15 @@ class FTPSSession:
     async def _send_listing(self, argument: str, *, machine: bool, names: bool) -> None:
         if not await self.require_auth():
             return
+        # Complete the protected data handshake before a cloud-backed listing.
+        # Some FTP clients wait for 150 before starting TLS on the data socket.
+        if not await self.begin_transfer("directory listing"):
+            return
         try:
             entries = await self._entries(argument)
         except FileNotFoundError:
             await self.reply(550, "Path not found")
             await self.close_data()
-            return
-        if not await self.begin_transfer("directory listing"):
             return
         lines: list[str] = []
         for entry in entries:
@@ -760,9 +796,18 @@ class FTPSSession:
     async def cmd_DELE(self, argument: str) -> None:
         if not await self.require_auth():
             return
-        target = self.real_path(self.virtual_path(argument))
+        virtual = self.virtual_path(argument)
+        target = self.real_path(virtual)
         if not target.is_file():
-            await self.reply(550, "File not found")
+            remote = await self.server.remote.find(virtual)
+            if remote is None:
+                await self.reply(550, "File not found")
+                return
+            if not self.config.remote_allow_delete:
+                await self.reply(550, "Remote delete is disabled")
+                return
+            await self.server.remote.delete(remote)
+            await self.reply(250, "Remote file deleted")
             return
         target.unlink()
         await self.reply(250, "File deleted")
@@ -859,12 +904,20 @@ class FTPSStagingServer:
     def __init__(self, config: FTPSConfig) -> None:
         self.config = config
         self.store = StagingStore(config)
-        self.remote = RemoteStorageClient(
-            api_url=config.remote_api_url,
-            access_code=config.access_code,
-            serial=config.remote_serial,
-            cache_dir=config.remote_cache_dir,
-            ttl=config.remote_catalog_ttl,
+        serials = config.remote_serials or ((config.remote_serial,) if config.remote_serial else ())
+        clients = {
+            serial: RemoteStorageClient(
+                api_url=config.remote_api_url,
+                access_code=config.access_code,
+                serial=serial,
+                cache_dir=config.remote_cache_dir,
+                ttl=config.remote_catalog_ttl,
+            )
+            for serial in serials
+        }
+        self.remote = RemoteStorageRouter(
+            clients,
+            config.remote_serial or (serials[0] if serials else ""),
         )
         self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2

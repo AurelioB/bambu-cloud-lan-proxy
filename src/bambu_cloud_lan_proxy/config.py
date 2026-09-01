@@ -37,6 +37,7 @@ class ProxyConfig:
     mode: ProxyMode
     allow_cancel: bool
     cloud_print_enabled: bool
+    remote_reprint_enabled: bool
     cloud_print_wait_seconds: float
     cloud_print_progress_timeout: float
     cloud_print_max_bytes: int
@@ -98,6 +99,9 @@ class ProxyConfig:
             mode=mode,
             allow_cancel=_env_bool("CLOUD_LAN_PROXY_ALLOW_CANCEL", False),
             cloud_print_enabled=cloud_print_enabled,
+            remote_reprint_enabled=_env_bool(
+                "CLOUD_LAN_PROXY_REMOTE_REPRINT_ENABLED", False
+            ),
             cloud_print_wait_seconds=cloud_print_wait_seconds,
             cloud_print_progress_timeout=cloud_print_progress_timeout,
             cloud_print_max_bytes=cloud_print_max_mb * 1024 * 1024,
