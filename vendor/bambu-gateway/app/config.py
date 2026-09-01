@@ -1,0 +1,102 @@
+"""Application configuration loaded from environment variables."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from pydantic_settings import BaseSettings
+
+
+@dataclass
+class PrinterConfig:
+    """Connection details for a single Bambu Lab printer."""
+
+    ip: str
+    access_code: str
+    serial: str
+    name: str = ""
+    machine_model: str = ""
+
+
+class Settings(BaseSettings):
+    """Application settings parsed from environment variables.
+
+    Printer lists are provided as comma-separated strings and split into
+    individual ``PrinterConfig`` entries via ``get_printers()``.
+    """
+
+    # Printer config (comma-separated for multi-printer support)
+    bambu_printer_ip: str = ""
+    bambu_printer_access_code: str = ""
+    bambu_printer_serial: str = ""
+
+    # Server
+    server_host: str = "0.0.0.0"
+    server_port: int = 4844
+
+    # Logging
+    log_level: str = "INFO"
+
+    # OrcaSlicer Headless API
+    orcaslicer_api_url: str = ""
+
+    # Upload limits
+    max_file_size_mb: int = 200
+
+    # Slice job concurrency
+    slice_max_concurrent: int = 1
+
+    # APNs (optional — missing any field disables push)
+    apns_key_path: str = ""
+    apns_key_id: str = ""
+    apns_team_id: str = ""
+    apns_bundle_id: str = ""
+    apns_environment: str = "production"  # or "sandbox"
+
+    # Bambu cloud direct-printing (opt-in)
+    bambu_cloud_enabled: bool = False
+    bambu_cloud_region: Literal["US", "CN"] = "US"
+    bambu_cloud_plugin_dir: Path = Path("/data/bambu-plugin")
+    bambu_cloud_host_binary: Path = Path("/usr/local/bin/bambu_cloud_host")
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    def get_printers(self) -> list[PrinterConfig]:
+        """Parse comma-separated printer env vars into a list of configs."""
+        ips = [s.strip() for s in self.bambu_printer_ip.split(",") if s.strip()]
+        codes = [s.strip() for s in self.bambu_printer_access_code.split(",") if s.strip()]
+        serials = [s.strip() for s in self.bambu_printer_serial.split(",") if s.strip()]
+
+        if not ips:
+            return []
+
+        count = len(ips)
+        if len(codes) != count or len(serials) != count:
+            raise ValueError(
+                f"Printer config mismatch: {count} IPs, {len(codes)} access codes, "
+                f"{len(serials)} serials. All lists must have the same length."
+            )
+
+        return [
+            PrinterConfig(ip=ip, access_code=code, serial=serial)
+            for ip, code, serial in zip(ips, codes, serials)
+        ]
+
+    @property
+    def push_enabled(self) -> bool:
+        """True iff every APNs credential is present and the key file exists."""
+        import os
+        required = (
+            self.apns_key_path,
+            self.apns_key_id,
+            self.apns_team_id,
+            self.apns_bundle_id,
+        )
+        if not all(required):
+            return False
+        return os.path.isfile(self.apns_key_path)
+
+
+settings = Settings()

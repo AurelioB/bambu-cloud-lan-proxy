@@ -1,37 +1,54 @@
 # syntax=docker/dockerfile:1
 
+# The cloud-session implementation is vendored under vendor/bambu-gateway.
+# Builds therefore do not download source or an image from the upstream
+# bambu-gateway project. See vendor/bambu-gateway/PROVENANCE.md.
+
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS cloud-host-builder
 
-ARG GATEWAY_COMMIT=79db09fff4929e9a7537453078031a51b3834c5f
-ARG GATEWAY_ARCHIVE_SHA256=791bfab95edfbc801466434ca014ca4aa8495af9f21993ffe04bb9e595ef81f0
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates cmake curl g++ libssl-dev make patch \
+ && apt-get install -y --no-install-recommends ca-certificates cmake g++ libssl-dev make patch \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN curl -fsSL "https://github.com/LeoLobato/bambu-gateway/archive/${GATEWAY_COMMIT}.tar.gz" -o /tmp/gateway.tar.gz \
- && echo "${GATEWAY_ARCHIVE_SHA256}  /tmp/gateway.tar.gz" | sha256sum -c - \
- && tar -xzf /tmp/gateway.tar.gz --strip-components=1 \
- && rm /tmp/gateway.tar.gz
+COPY vendor/bambu-gateway/tools/bambu_cloud_host tools/bambu_cloud_host
 COPY docker/gateway-host/upstream.patch /tmp/upstream.patch
 COPY docker/gateway-host/storage_bridge.* tools/bambu_cloud_host/
 RUN patch -p1 < /tmp/upstream.patch \
  && cmake -S tools/bambu_cloud_host -B /build -DCMAKE_BUILD_TYPE=Release \
  && cmake --build /build --parallel
 
-# Bambu Gateway v3.0.0 (upstream commit 79db09fff4929e9a7537453078031a51b3834c5f).
-# Pinning the digest makes the small compatibility hook fail predictably if
-# Gateway's private APIs change in a later release.
-FROM ghcr.io/leolobato/bambu-gateway@sha256:56073204264aad5eda98ef5e6d82a05316af64d0474de0f26c89a6b67496e145
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS web-builder
+
+WORKDIR /web
+COPY vendor/bambu-gateway/web/package.json vendor/bambu-gateway/web/package-lock.json ./
+RUN npm install --no-audit --prefer-offline
+COPY vendor/bambu-gateway/web/ ./
+RUN npm run build
+
+FROM python:3.13-slim@sha256:881d80734ee05dca6f7f42dcb080975652a53c7eda9ba1f03bb8da31aa6a6ec2
 
 ARG PROXY_VERSION="dev"
 LABEL org.opencontainers.image.title="Bambu Cloud LAN Proxy" \
-      org.opencontainers.image.description="Local MQTT facade for Bambu Gateway cloud printers" \
+      org.opencontainers.image.description="Standalone local Bambu LAN facade backed by a Bambu cloud session" \
       org.opencontainers.image.version="${PROXY_VERSION}" \
-      org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy"
+      org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy" \
+      org.opencontainers.image.licenses="MIT"
 
-COPY src/bambu_cloud_lan_proxy /opt/bambu-cloud-lan-proxy/bambu_cloud_lan_proxy
 COPY --from=cloud-host-builder /build/bambu_cloud_host /usr/local/bin/bambu_cloud_host
+COPY vendor/bambu-gateway/tools/bambu_cloud_host/certs/bbl_printer_ca.cer /usr/local/share/ca-certificates/bbl_printer_ca.pem
+RUN cat /usr/local/share/ca-certificates/bbl_printer_ca.pem >> /etc/ssl/certs/ca-certificates.crt
+
+WORKDIR /app
+COPY vendor/bambu-gateway/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY vendor/bambu-gateway/app/ app/
+COPY --from=web-builder /app/static/dist /app/app/static/dist
+COPY src/bambu_cloud_lan_proxy /opt/bambu-cloud-lan-proxy/bambu_cloud_lan_proxy
+COPY vendor/bambu-gateway/LICENSE /usr/share/licenses/bambu-gateway/LICENSE
 
 ENV PYTHONPATH="/opt/bambu-cloud-lan-proxy:/app"
+VOLUME /data
+EXPOSE 4844
+
 ENTRYPOINT ["python", "-m", "bambu_cloud_lan_proxy.launcher"]
 CMD ["-m", "app", "-c", "/data/printers.json"]

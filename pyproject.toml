@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bambu-cloud-lan-proxy"
 version = "0.4.0"
-description = "A local Bambu-shaped MQTT facade backed by Bambu Gateway cloud sessions"
+description = "A standalone local Bambu-shaped LAN facade backed by Bambu cloud sessions"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "AurelioB"}]

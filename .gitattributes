@@ -1,0 +1,2 @@
+# Preserve attributed third-party snapshots byte-for-byte.
+vendor/** -whitespace

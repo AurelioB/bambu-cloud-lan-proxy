@@ -3,7 +3,7 @@
 ```text
 Bambu Handy ───────────────┐
                            v
-H2C <──────> Bambu Cloud <────> Bambu Gateway + compatibility hook
+H2C <──────> Bambu Cloud <────> vendored cloud-session core + compatibility hook
                                 |            ^  |
                          media tunnel        |  | raw report / checked request
                                 v            |  v
@@ -21,9 +21,9 @@ It pins that endpoint's certificate and republishes only report messages. A
 fresh heartbeat makes the Gateway hook suppress duplicate cloud reports; if
 LAN telemetry stops, cloud reporting resumes automatically.
 
-Gateway's official network-plugin subprocess owns cloud authentication,
-subscription, command signing, and token refresh. This project patches one
-stable Python boundary in the pinned Gateway image:
+The bundled cloud-session service's official network-plugin subprocess owns
+cloud authentication, subscription, command signing, and token refresh. This
+project patches one stable Python boundary in the vendored source snapshot:
 
 1. `CloudPrinterClient.handle_event` publishes the original cloud MQTT JSON to
    `device/<serial>/report` without reconstructing printer state.
@@ -85,10 +85,10 @@ path is local-only and cannot fall back to Bambu's proprietary cloud video.
 
 There are three unrelated certificate concerns:
 
-- **Bambu cloud credentials:** kept and refreshed by Bambu Gateway's official
-  plugin. This project never extracts or redistributes its signing key.
-- **Bambu printer CA:** already bundled by upstream Gateway for direct local
-  printer verification. It is not the certificate Bambuddy sees here.
+- **Bambu cloud credentials:** kept and refreshed by Bambu's official plugin.
+  This project never extracts or redistributes its signing key.
+- **Bambu printer CA:** retained in the attributed vendored source for direct
+  local printer verification. It is not the certificate Bambuddy sees here.
 - **Proxy TLS:** generated locally by the Compose bootstrap and used for MQTT,
   FTPS, and RTSPS. The CA private key stays under `data/`;
   `scripts/export-ca.sh` exports only its public certificate. The runtime

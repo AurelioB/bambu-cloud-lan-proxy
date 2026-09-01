@@ -6,16 +6,18 @@ Bambu Lab H2C from [Bambuddy](https://github.com/maziggy/bambuddy) without
 turning off Bambu Handy.
 
 ```text
-H2C ↔ Bambu Cloud ↔ Bambu Gateway ↔ local MQTT/TLS + file facade ↔ clients
+H2C ↔ Bambu Cloud ↔ bundled cloud-session core ↔ local LAN facade ↔ clients
  ├──── read-only LAN MQTT (preferred while reachable) ─────────────┤
  └──── LAN-only RTSPS camera ───────── local RTSPS :322 ──────────┘
 ```
 
-The H2C stays in normal cloud mode. [Bambu
-Gateway](https://github.com/leolobato/bambu-gateway) uses Bambu's official
-network plugin for cloud authentication and signed traffic. This project adds
-a small compatibility hook and a hardened Mosquitto listener; it does not
-reverse proxy Bambu's public broker or place account credentials in Bambuddy.
+The H2C stays in normal cloud mode. The bundled cloud-session core is derived
+from the MIT-licensed [Bambu
+Gateway](https://github.com/leolobato/bambu-gateway) project and uses Bambu's
+official network plugin for cloud authentication and signed traffic. This
+project owns a reviewed source snapshot plus its compatibility layer; it does
+not reverse proxy Bambu's public broker or place account credentials in
+Bambuddy.
 
 ## What works
 
@@ -39,11 +41,12 @@ reverse proxy Bambu's public broker or place account credentials in Bambuddy.
 - Bambuddy archive reads for both staged files and files already on the printer
 - Authenticated RTSPS camera relay on port 322 when the printer's **LAN-only
   liveview** endpoint is enabled and reachable
-- Optional `project_file` handoff to Gateway's signed cloud-print pipeline,
+- Optional `project_file` handoff to the signed cloud-print pipeline,
   including plate, AMS, H2C nozzle mapping, and print-option translation
 - Bambu Handy at the same time, because the printer remains cloud-connected
 - Automatic local TLS CA/server certificate and MQTT credential creation
-- A reproducible Docker Compose deployment pinned to Bambu Gateway 3.0.0
+- A standalone Docker Compose deployment with its cloud-session source and
+  container foundations pinned in this repository
 
 The default is deliberately safe: status is read-only and direct cloud-print
 dispatch is disabled. FTPS and staged-file/archive access are available without
@@ -69,11 +72,12 @@ then run:
 
 The first command creates `.env`, an eight-character local access code, a local
 certificate authority, and the staged filesystem. The second builds and starts
-Gateway, the TLS MQTT broker, implicit FTPS, and the RTSPS camera relay.
+the bundled cloud-session service, TLS MQTT broker, implicit FTPS, and RTSPS
+camera relay.
 
-Open Gateway at `http://127.0.0.1:4844`, then connect the cloud account in
+Open the control panel at `http://127.0.0.1:4844`, then connect the cloud account in
 **Settings → Cloud Account**. Bambu's redirect to `localhost:13618` is expected
-to fail in the browser; copy the complete redirect URL back into Gateway's
+to fail in the browser; copy the complete redirect URL back into the panel's
 **Complete sign-in** field. The session is stored only in `data/gateway/`.
 
 If a Gateway deployment is already signed in, import it before starting this
@@ -92,7 +96,7 @@ Use **Printers → Add printer → Manual** and enter:
 | Bambuddy field | Value |
 | --- | --- |
 | IP address | `127.0.0.2` when Bambuddy uses host networking on this host |
-| Serial number | Exact physical printer serial shown in Gateway |
+| Serial number | Exact physical printer serial shown in the control panel |
 | Access code | `PROXY_ACCESS_CODE` from `.env` |
 | Model | The physical model, for example H2C |
 
@@ -140,7 +144,7 @@ PROXY_STORAGE_PRINTER_SERIAL=YOUR_SERIAL
 ```
 
 The cloud file path does not require Developer Mode or physical LAN-mode ports.
-It does require the printer and Gateway cloud session to be online.
+It does require the printer and proxy cloud session to be online.
 
 For multiple allowed printers, FTPS adds
 `/printers/<serial>/{cache,timelapse,video}`. The primary printer also retains
@@ -163,7 +167,7 @@ docker compose up -d --build gateway
 
 The facade acknowledges Bambuddy's `project_file`, waits for either observed
 slicer ordering (FTP-first or MQTT-first), snapshots the completed 3MF, and
-hands it to Gateway's official cloud plugin. It refuses the job when the
+hands it to Bambu's official cloud plugin. It refuses the job when the
 printer is offline, busy, the file is missing/corrupt/too large, another cloud
 submission is active, or the exact MQTT request is replayed. The physical
 printer never downloads `ftp://127.0.0.2/...`; Gateway uploads the snapshot to
@@ -208,7 +212,7 @@ PROXY_ALLOW_CANCEL=true
 PROXY_CLOUD_PRINT_ENABLED=true
 ```
 
-`full_control` sends Bambuddy's request envelope through Gateway's official
+`full_control` sends Bambuddy's request envelope through Bambu's official
 network plugin, which performs cloud authentication and signing. It permits
 real motion, heating, G-code, calibration, and other commands supported by the
 cloud service. It cannot make a cloud-rejected or LAN-only firmware operation
@@ -266,8 +270,8 @@ timelapses and downloads the smallest one without changing printer storage.
 
 [open-bamboo-networking](https://github.com/ClusterM/open-bamboo-networking)
 can fetch slicer-side credentials because it replaces the slicer's network
-plugin. This proxy has a different boundary: upstream Gateway already loads
-the official plugin and owns its cloud credentials. Extracting or shipping
+plugin. This proxy has a different boundary: its bundled cloud-session core
+loads the official plugin and owns its cloud credentials. Extracting or shipping
 Bambu's shared private signing material would add both security and maintenance
 risk without helping Bambuddy.
 
@@ -288,9 +292,17 @@ python -m pip install -e '.[dev]'
 docker compose build gateway
 ```
 
-The derived image is intentionally small: it pins Gateway v3.0.0 by digest and
-hooks the raw `CloudPrinterClient.handle_event` boundary at startup. If that API
-changes, startup fails rather than silently exposing a broken proxy.
+All application source used by the image is built from this checkout. It
+vendors the exact Bambu Gateway 3.0.0 source snapshot used by the cloud-session
+core, retains the upstream MIT license in both the repository and image, and
+pins all three container foundations by digest. It does not pull a Bambu
+Gateway image or download Bambu Gateway source during a build. See [the
+vendored-source provenance](vendor/bambu-gateway/PROVENANCE.md).
+
+The runtime still downloads Bambu Lab's official, version-pinned networking
+plugin from Bambu's CDN when needed. That proprietary component and Bambu's
+cloud service are unavoidable external runtime dependencies for signed cloud
+control; they are not dependencies on the Bambu Gateway project.
 
 This project is independent and is not affiliated with or endorsed by Bambu
 Lab, Bambu Gateway, or Bambuddy.
