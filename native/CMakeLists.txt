@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.20)
+project(bambu_proxy_native LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(nlohmann_json 3.11 REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
+add_executable(bambu-proxy-native main.cpp storage_bridge.cpp)
+target_include_directories(bambu-proxy-native PRIVATE .)
+target_link_libraries(bambu-proxy-native PRIVATE nlohmann_json::nlohmann_json
+                      OpenSSL::Crypto Threads::Threads ${CMAKE_DL_LIBS})
+target_compile_options(bambu-proxy-native PRIVATE -Wall -Wextra -Wpedantic)

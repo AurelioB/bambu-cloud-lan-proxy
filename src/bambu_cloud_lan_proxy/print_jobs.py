@@ -219,7 +219,10 @@ def _derive_mapping2(mapping: tuple[int, ...]) -> list[dict[str, int]]:
 def build_gateway_print_params(
     request: CloudPrintRequest, *, serial: str, file_path: Path
 ) -> dict[str, Any]:
-    """Translate a LAN ``project_file`` into Gateway's official plugin ABI."""
+    """Translate a LAN ``project_file`` into the pinned Bambu plugin ABI.
+
+    The function name is retained for compatibility with existing callers.
+    """
 
     mapping = list(request.ams_mapping) if request.ams_mapping is not None else None
     mapping2: list[dict[str, int]] | None
@@ -248,8 +251,7 @@ def build_gateway_print_params(
         "ams_mapping2": (json.dumps(mapping2, **compact) if mapping2 is not None else ""),
         "ams_mapping_info": "",
         "nozzles_info": "",
-        # Gateway's pinned builder deliberately uses an empty value for its
-        # pure-cloud route; retain that known-working convention.
+        # The reviewed plugin uses an empty value for its pure-cloud route.
         "connection_type": "",
         "task_bed_leveling": request.bed_leveling,
         "task_flow_cali": request.flow_cali,

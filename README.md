@@ -11,13 +11,17 @@ H2C ↔ Bambu Cloud ↔ bundled cloud-session core ↔ local LAN facade ↔ clie
  └──── LAN-only RTSPS camera ───────── local RTSPS :322 ──────────┘
 ```
 
-The H2C stays in normal cloud mode. The bundled cloud-session core is derived
-from the MIT-licensed [Bambu
-Gateway](https://github.com/leolobato/bambu-gateway) project and uses Bambu's
-official network plugin for cloud authentication and signed traffic. This
-project owns a reviewed source snapshot plus its compatibility layer; it does
-not reverse proxy Bambu's public broker or place account credentials in
-Bambuddy.
+The H2C stays in normal cloud mode. This repository implements its own small,
+headless cloud-session service and native adapter for Bambu's official plugin.
+It does not include, import, patch, build, or install Bambu Gateway. Gateway
+was reviewed as a protocol reference; attribution remains in
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
+
+The first-party replacement is under integration validation. Unit tests and
+isolated native-plugin initialization have passed; a fresh cloud login,
+printer writes, file transfer and print dispatch through this new runtime still
+need end-to-end validation before replacing an existing deployment. Previous
+live checks against the Gateway-based runtime do not validate the rewrite.
 
 ## What works
 
@@ -50,7 +54,7 @@ Bambuddy.
 
 The default is deliberately safe: status is read-only and direct cloud-print
 dispatch is disabled. FTPS and staged-file/archive access are available without
-enabling printer writes. Cloud printing through Handy or Gateway remains
+enabling printer writes. Cloud printing through Handy or Studio remains
 available independently.
 
 The camera path is deliberately local: it pulls the printer's RTSPS liveview,
@@ -62,7 +66,7 @@ is not re-published by this project.
 
 ## Quick start
 
-Requirements: Docker Engine with Compose v2 and a Linux host. Clone the repo,
+Requirements: Docker Engine with Compose v2 and an x86_64 Linux host. Clone the repo,
 then run:
 
 ```sh
@@ -75,10 +79,17 @@ certificate authority, and the staged filesystem. The second builds and starts
 the bundled cloud-session service, TLS MQTT broker, implicit FTPS, and RTSPS
 camera relay.
 
-Open the control panel at `http://127.0.0.1:4844`, then connect the cloud account in
-**Settings → Cloud Account**. Bambu's redirect to `localhost:13618` is expected
-to fail in the browser; copy the complete redirect URL back into the panel's
-**Complete sign-in** field. The session is stored only in `data/gateway/`.
+Sign in using the local setup command:
+
+```sh
+docker compose exec gateway python -m bambu_cloud_lan_proxy.cloud_setup
+```
+
+It prints a Bambu-hosted sign-in link and accepts the final `localhost:13618`
+callback URL through hidden input. There is no Gateway dashboard. The daemon
+exposes authenticated setup/status APIs on port 4844; the Compose service name
+`gateway`, `GATEWAY_*` port settings, and `data/gateway/` directory are retained
+only to preserve existing deployment configuration and plugin session state.
 
 If a Gateway deployment is already signed in, import it before starting this
 stack:
@@ -96,7 +107,7 @@ Use **Printers → Add printer → Manual** and enter:
 | Bambuddy field | Value |
 | --- | --- |
 | IP address | `127.0.0.2` when Bambuddy uses host networking on this host |
-| Serial number | Exact physical printer serial shown in the control panel |
+| Serial number | Exact physical printer serial from the printer or Studio |
 | Access code | `PROXY_ACCESS_CODE` from `.env` |
 | Model | The physical model, for example H2C |
 
@@ -170,7 +181,7 @@ slicer ordering (FTP-first or MQTT-first), snapshots the completed 3MF, and
 hands it to Bambu's official cloud plugin. It refuses the job when the
 printer is offline, busy, the file is missing/corrupt/too large, another cloud
 submission is active, or the exact MQTT request is replayed. The physical
-printer never downloads `ftp://127.0.0.2/...`; Gateway uploads the snapshot to
+printer never downloads `ftp://127.0.0.2/...`; the plugin uploads the snapshot to
 Bambu's cloud-print path and signs the dispatch.
 
 `PROXY_MODE=read_only` may remain in place: the cloud-print switch is
@@ -180,7 +191,7 @@ pause/resume/speed/light and pre-print control paths. Cancel still needs
 
 Files uploaded through the facade remain under `data/staging/`, so Bambuddy can
 download them for covers and archives. A print started in Handy or directly in
-Gateway has no corresponding staged file; the current official plugin exposes
+Studio may have no corresponding staged file; the official print API exposes
 cloud upload/dispatch, but no API to pull the source 3MF back into this
 filesystem. Those jobs still monitor normally, but automatic 3MF archival can
 only succeed when Bambuddy already has a local copy or the job traversed this
@@ -246,24 +257,24 @@ command. The normal FTPS verification round-trips one tiny synthetic ZIP/3MF
 through staging and deletes it. `--remote` additionally lists the printer's
 timelapses and downloads the smallest one without changing printer storage.
 
-- **Bambuddy connects but shows no data:** confirm its serial matches Gateway
-  exactly; MQTT topics are case-sensitive. Wait up to 30 seconds for Gateway's
+- **Bambuddy connects but shows no data:** confirm its serial matches the printer
+  exactly; MQTT topics are case-sensitive. Wait up to 30 seconds for the proxy's
   periodic full snapshot.
 - **Authentication refused:** copy the eight-character code from `.env` again,
   then rerun `./scripts/init.sh` and restart `mqtt` if it changed.
 - **FTPS/port 990 fails:** confirm `ftps` is healthy and that passive ports
   50000-50009 are reachable from Bambuddy as well as port 990.
 - **Printer files are missing:** set `PROXY_STORAGE_PRINTER_SERIAL`, confirm it
-  is allowed by `PROXY_PRINTERS`, and verify that both the printer and Gateway's
+  is allowed by `PROXY_PRINTERS`, and verify that both the printer and the proxy's
   cloud account are online. Listings are cached for 30 seconds by default.
 - **Queue upload succeeds but no print starts:** direct dispatch is off by
-  default. Check `PROXY_CLOUD_PRINT_ENABLED`, then inspect Gateway logs. A busy
+  default. Check `PROXY_CLOUD_PRINT_ENABLED`, then inspect the service logs. A busy
   printer is intentionally refused rather than risking its active job.
 - **Camera check fails:** confirm LAN-only liveview is enabled and
   `CAMERA_UPSTREAM_IP` is current, then test that the Docker host can reach that
   IP on TCP 322. Status may still work through cloud while this local path is
   down. If port 322 is unavailable, use Bambuddy's external-camera fallback.
-- **Gateway has no printers:** complete its Bambu cloud sign-in and confirm the
+- **Proxy has no printers:** complete Bambu cloud sign-in and confirm the
   correct `BAMBU_CLOUD_REGION` (`US` or `CN`).
 
 ## Why no Bambu certificate extraction?
@@ -292,12 +303,21 @@ python -m pip install -e '.[dev]'
 docker compose build gateway
 ```
 
-All application source used by the image is built from this checkout. It
-vendors the exact Bambu Gateway 3.0.0 source snapshot used by the cloud-session
-core, retains the upstream MIT license in both the repository and image, and
-pins all three container foundations by digest. It does not pull a Bambu
-Gateway image or download Bambu Gateway source during a build. See [the
-vendored-source provenance](vendor/bambu-gateway/PROVENANCE.md).
+All application source used by the image is built from this checkout. The
+cloud service is Python/asyncio plus a focused C++ plugin shim. There is no
+vendored Gateway application, web frontend, or monkeypatch. Ordinary packages
+(including nlohmann/json) are dependencies, not copied Gateway source.
+
+Run tests against the new image without a printer or network:
+
+```sh
+docker build -f Dockerfile.proxy --target test -t proxy-test .
+docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace \
+  -e PYTHONPATH=/workspace/src proxy-test
+```
+
+See [the independence review and Rust assessment](docs/gateway-independence.md)
+for the replacement scope, safety boundaries, and migration validation plan.
 
 The runtime still downloads Bambu Lab's official, version-pinned networking
 plugin from Bambu's CDN when needed. That proprietary component and Bambu's

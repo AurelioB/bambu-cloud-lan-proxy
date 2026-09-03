@@ -1,23 +1,24 @@
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_cloud_session_build_uses_vendored_source() -> None:
-    dockerfile = (ROOT / "Dockerfile.gateway").read_text()
+def test_no_gateway_application_dependency():
+    assert not any((ROOT / "vendor" / "bambu-gateway").rglob("*.*"))
+    dockerfile = (ROOT / "Dockerfile.proxy").read_text()
+    assert "vendor/" not in dockerfile
+    assert "leolobato" not in dockerfile.lower()
+    assert "node:" not in dockerfile
+    assert "bambu_cloud_lan_proxy.service" in dockerfile
+    for path in (ROOT / "src").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom):
+                assert (node.module or "").split(".")[0] != "app", path
+            if isinstance(node, ast.Import):
+                assert all(alias.name.split(".")[0] != "app" for alias in node.names), path
 
-    assert "vendor/bambu-gateway/app" in dockerfile
-    assert "vendor/bambu-gateway/tools/bambu_cloud_host" in dockerfile
-    assert "vendor/bambu-gateway/web" in dockerfile
-    assert "ghcr.io/leolobato/bambu-gateway" not in dockerfile
-    assert "bambu-gateway/archive" not in dockerfile
 
-
-def test_vendored_source_retains_license_and_provenance() -> None:
-    vendor = ROOT / "vendor" / "bambu-gateway"
-
-    assert (vendor / "LICENSE").is_file()
-    assert "MIT License" in (vendor / "LICENSE").read_text()
-    assert "79db09fff4929e9a7537453078031a51b3834c5f" in (
-        vendor / "PROVENANCE.md"
-    ).read_text()
+def test_first_party_native_host_and_reference_attribution():
+    assert (ROOT / "native" / "main.cpp").is_file()
+    assert "Leonardo Lobato" in (ROOT / "THIRD_PARTY_NOTICES").read_text()

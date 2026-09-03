@@ -23,3 +23,5 @@ jobs:
       - run: cp .env.example .env
       - run: sed -i 's/PROXY_ACCESS_CODE=CHANGE_ME/PROXY_ACCESS_CODE=TEST1234/' .env
       - run: docker compose config --quiet
+      - run: docker build -f Dockerfile.proxy --target test -t proxy-test .
+      - run: docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace -e PYTHONPATH=/workspace/src proxy-test

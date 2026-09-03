@@ -24,7 +24,7 @@ class RemoteFile:
 
 
 class RemoteStorageClient:
-    """Calls Gateway's loopback-only authenticated storage RPC facade."""
+    """Calls the proxy's authenticated internal storage RPC facade."""
 
     _MOUNTS = {
         PurePosixPath("/cache"): "model",

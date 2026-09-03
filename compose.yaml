@@ -275,7 +275,7 @@ services:
   gateway:
     build:
       context: .
-      dockerfile: Dockerfile.gateway
+      dockerfile: Dockerfile.proxy
       args:
         PROXY_VERSION: ${PROXY_VERSION:-dev}
     depends_on:

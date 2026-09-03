@@ -1,4 +1,4 @@
-"""MQTT broker adapter embedded into Bambu Gateway's cloud process."""
+"""Policy-enforcing MQTT facade for our cloud-session transport."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ logger = logging.getLogger("bambu.cloud_lan_proxy")
 
 
 class CloudLanFacade:
-    """Connects Gateway cloud clients to a local Bambu-shaped MQTT broker."""
+    """Connects cloud clients to a local Bambu-shaped MQTT broker."""
 
     def __init__(self, config: ProxyConfig) -> None:
         self.config = config
@@ -54,6 +54,8 @@ class CloudLanFacade:
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def register(self, cloud_client: Any) -> None:
+        if not self.config.enabled:
+            return
         serial = str(cloud_client.serial).upper()
         if not self.config.permits_printer(serial):
             logger.info("serial=%s omitted by CLOUD_LAN_PROXY_PRINTERS", serial)
@@ -66,6 +68,16 @@ class CloudLanFacade:
         self._ensure_started()
         logger.info("serial=%s registered with cloud LAN facade", serial)
 
+    async def stop(self) -> None:
+        """Stop accepting commands before draining/cancelling tracked submissions."""
+        if self._mqtt:
+            self._mqtt.disconnect()
+            self._mqtt.loop_stop()
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+
     def _ensure_started(self) -> None:
         if self._started:
             return
@@ -74,7 +86,7 @@ class CloudLanFacade:
                 return
             client = mqtt.Client(
                 callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-                client_id="bambu-cloud-lan-proxy-gateway",
+                client_id="bambu-cloud-lan-proxy",
                 protocol=mqtt.MQTTv311,
             )
             client.on_connect = self._on_connect
@@ -185,7 +197,7 @@ class CloudLanFacade:
         if loop is None or loop.is_closed():
             self._publish_rejection(
                 serial,
-                Decision(Action.BLOCK, decision.request, "Gateway event loop unavailable"),
+                Decision(Action.BLOCK, decision.request, "Proxy event loop unavailable"),
             )
             return
 
@@ -398,7 +410,7 @@ class CloudLanFacade:
             )
         finally:
             self._active_print_serials.discard(serial)
-            if snapshot is not None:
+            if snapshot is not None and not getattr(cloud_client, "uncertain_submission", False):
                 try:
                     snapshot.unlink(missing_ok=True)
                 except OSError as exc:

@@ -12,9 +12,12 @@ authors = [{name = "AurelioB"}]
 dependencies = ["paho-mqtt==2.1.0"]
 
 [project.optional-dependencies]
+cloud = ["fastapi==0.115.6", "uvicorn==0.34.0", "httpx==0.28.1"]
 dev = [
   "pytest==8.3.5",
   "ruff==0.9.10",
+  "fastapi==0.115.6",
+  "httpx==0.28.1",
 ]
 
 [tool.setuptools.packages.find]
