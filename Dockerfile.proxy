@@ -1,5 +1,12 @@
 # syntax=docker/dockerfile:1
-FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS native-builder
+FROM node:24-bookworm-slim AS web-builder
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run check && npm run build
+
+FROM debian:bookworm-slim AS native-builder
 RUN apt-get update \
  && apt-get install -y --no-install-recommends cmake g++ libssl-dev make nlohmann-json3-dev \
  && rm -rf /var/lib/apt/lists/*
@@ -7,28 +14,31 @@ COPY native /src/native
 RUN cmake -S /src/native -B /build -DCMAKE_BUILD_TYPE=Release \
  && cmake --build /build --parallel
 
-FROM python:3.13-slim@sha256:881d80734ee05dca6f7f42dcb080975652a53c7eda9ba1f03bb8da31aa6a6ec2 AS runtime
+FROM rust:1.96-bookworm AS rust-builder
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY --from=web-builder /src/web/dist ./web/dist
+RUN cargo build --locked --release
+
+FROM bluenviron/mediamtx@sha256:1b029d11049be75630e9b73bb0d5f47b08a7db4eaee89a80bf8f53bc40e56414 AS mediamtx
+
+FROM debian:bookworm-slim AS runtime
 ARG PROXY_VERSION="dev"
 LABEL org.opencontainers.image.title="Bambu Cloud LAN Proxy" \
       org.opencontainers.image.version="${PROXY_VERSION}" \
       org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy" \
       org.opencontainers.image.licenses="MIT"
-WORKDIR /app
-COPY requirements-runtime.txt .
-RUN pip install --no-cache-dir -r requirements-runtime.txt
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl libssl3 openssl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 1883 bambuproxy \
+ && useradd --uid 1883 --gid 1883 --no-create-home bambuproxy
+COPY --from=rust-builder /src/target/release/bambu-cloud-lan-proxy /usr/local/bin/bambu-cloud-lan-proxy
 COPY --from=native-builder /build/bambu-proxy-native /usr/local/bin/bambu-proxy-native
 COPY --from=native-builder /usr/share/doc/nlohmann-json3-dev/copyright /usr/share/licenses/nlohmann-json/copyright
-COPY src/bambu_cloud_lan_proxy ./bambu_cloud_lan_proxy
+COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
 COPY LICENSE THIRD_PARTY_NOTICES /usr/share/licenses/bambu-cloud-lan-proxy/
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 VOLUME /data
 EXPOSE 4844
-ENTRYPOINT ["python", "-m", "bambu_cloud_lan_proxy.service"]
-
-FROM runtime AS test
-RUN pip install --no-cache-dir pytest==8.3.5
-ENV BAMBU_TEST_NATIVE=/usr/local/bin/bambu-proxy-native
-ENTRYPOINT ["python", "-m", "pytest", "-p", "no:cacheprovider"]
-
-# Keep testing tools out of the default production image.
-FROM runtime AS release
+ENTRYPOINT ["/usr/local/bin/bambu-cloud-lan-proxy"]

@@ -14,12 +14,12 @@ What we actually need:
 
 | Responsibility | First-party replacement |
 | --- | --- |
-| Plugin acquisition/integrity | `plugin_install.py`: HTTPS, exact version and checked-in binary hashes |
-| Browser-ticket sign-in | `cloud_auth.py`, authenticated APIs, hidden-input `cloud_setup.py` CLI |
-| Plugin process, request correlation, events | `plugin_rpc.py`: bounded JSON-lines RPC, no command retries |
-| Cloud login/subscription lifecycle | `service.py`: account discovery, subscriptions, reconnect, certificate events |
-| Printer reports | Preserve raw JSON; `cloud_printer.py` only interprets job-safety state |
-| Pause/resume/speed/light | `commands.py`, separate from transport |
+| Plugin acquisition/integrity | `plugin_install.rs`: HTTPS, exact version and checked-in binary hashes |
+| Browser-ticket sign-in | `cloud_auth.rs` plus authenticated admin API |
+| Plugin process, request correlation, events | `plugin_rpc.rs`: bounded JSON-lines RPC, no command retries |
+| Cloud login/subscription lifecycle | `service.rs`: account discovery, subscriptions, reconnect, certificate events |
+| Printer reports | Preserve raw JSON; `cloud_printer.rs` only interprets job-safety state |
+| Pause/resume/speed/light | `commands.rs`, separate from transport |
 | Print upload/dispatch | Existing staging/policy code plus native PrintArguments ABI |
 | Printer file/media access | Existing project-owned storage bridge and file facades |
 | Physical ABI bridge | `native/`: dlopen, C++ argument types/callbacks, isolated process |
@@ -27,7 +27,7 @@ What we actually need:
 Not carried forward: Gateway's dashboard, slicer/catalog/profile tools, APNs,
 notification system, parsed AMS/temperature UI model, duplicate LAN clients,
 and REST command endpoints bypassing the proxy policy. Bambuddy/Studio remain
-the user-facing tools. The daemon is intentionally headless.
+the primary clients; the embedded Svelte console covers setup, health, and policy.
 
 The Compose service name `gateway` and data directory are compatibility names,
 not dependencies. `import-gateway-data.sh` is optional migration tooling only.
@@ -36,22 +36,21 @@ or monkeypatches. The native storage bridge predates this change and is our code
 Source-informed ABI/protocol review is acknowledged in `THIRD_PARTY_NOTICES`;
 this is not claimed to be a clean-room implementation.
 
-## Rust: useful option, not a prerequisite
+## Rust migration decision
 
-Recommendation: keep Python/asyncio for this replacement and retain a small
-isolated C++ shim. Do not port the working MQTT policy, FTPS, discovery, camera,
-and file adapters in the same change as replacing the cloud backend.
+The application layer is now Rust/Tokio. The migration keeps the small isolated
+C++ shim because the proprietary plugin exposes C++ ABI types that must not be
+modeled as a plain Rust `extern "C"` interface.
 
-Rust would offer stronger compile-time state/concurrency checks and could
-reduce daemon runtime/dependency overhead. Tokio plus a typed RPC transport
-would fit this I/O-bound service. But no measurements currently show Python
-throughput or memory to be the bottleneck. Rewriting the tested protocol
-adapters adds regression risk without removing cloud/firmware uncertainty.
+Rust provides typed state/concurrency checks and one application binary for the
+cloud service, FTPS, native files, discovery, telemetry, camera setup, and TCP
+relay. It does not remove cloud/firmware uncertainty or the need for supervised
+hardware compatibility testing.
 
 The plugin's functions use `std::string`, `std::vector`, `std::map`,
 `std::function`, and a by-value print-argument struct. Plain Rust `extern "C"`
-cannot safely pretend these are C types. A Rust daemon would still need C++
-glue (or a carefully maintained C ABI/CXX wrapper). Rust cannot make a wrong
+cannot safely pretend these are C types. The Rust daemon still needs C++ glue.
+Rust cannot make a wrong
 proprietary ABI layout safe, eliminate the proprietary binary, or by itself
 produce native ARM support for an x86_64-only plugin. Process isolation remains
 useful regardless of the supervisor language.
@@ -62,10 +61,7 @@ Primary references: [Rust FFI documentation](https://doc.rust-lang.org/nomicon/f
 Our pinned ABI is 02.05.02.58; current upstream declarations are not an
 automatic replacement for those exact binary layouts.
 
-If Rust is desired later, port only the supervisor first against the same RPC
-contract/replay tests. Keep native plugin crash isolation and compare behavior
-before changing LAN adapters. Adoption should follow a measured maintenance,
-resource, or reliability benefit—not be coupled to removing Gateway.
+Native plugin crash isolation and the bounded RPC contract remain unchanged.
 
 ## Safety and limitations
 
@@ -85,7 +81,7 @@ resource, or reliability benefit—not be coupled to removing Gateway.
   Bambu signature. If the CDN stops offering those exact files, installation
   fails until an explicit compatibility review/update. No fallback to latest.
 - Account sessions remain inside plugin state; signing material is not extracted.
-- Runtime and base-image pins do not make apt/PyPI transitive dependencies a
+- Runtime and base-image pins do not make apt/npm/crates.io transitive dependencies a
   hermetic build. The project is independent of Gateway, not every package source.
 
 ## Cutover checklist

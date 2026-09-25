@@ -3,11 +3,11 @@
 ```text
 Bambu Handy ───────────────┐
                            v
-H2C <──────> Bambu Cloud <────> first-party session service + native plugin shim
+H2C <──────> Bambu Cloud <────> Rust session service + native plugin shim
                                 |            ^  |
                          media tunnel        |  | raw report / checked request
                                 v            |  v
-                    read-through FTPS <── staged 3MF + Mosquitto TLS :8883
+                         Rust FTPS <── staged 3MF + Mosquitto TLS :8883
                               ^                         ^
                               └──────── Bambuddy ───────┘
 
@@ -21,7 +21,7 @@ It pins that endpoint's certificate and republishes only report messages. A
 fresh heartbeat makes the cloud bridge suppress duplicate cloud reports; if
 LAN telemetry stops, cloud reporting resumes automatically.
 
-The first-party service orchestrates authentication and subscriptions through
+The Rust service orchestrates authentication and subscriptions through
 the official networking plugin. The plugin owns signing and persisted token
 refresh. Our native subprocess communicates via private JSON-lines RPC:
 
@@ -46,7 +46,7 @@ native host passes that URL directly to the official `libBambuSource` control
 stream; the URL is never logged, persisted, or returned to FTPS. `LIST_INFO`
 responses are projected into `cache/`, `timelapse/`, and `video/`. A `RETR`
 causes an on-demand `FILE_DOWNLOAD` into `data/remote-cache/`, validates size
-and MD5, streams it over protected FTPS, then asks the proxy to remove it. The
+and MD5, streams it over the TLS port-6000 protocol, then asks the proxy to remove it. The
 same bridge supports ability, sub-file, upload, delete, and cancel operations.
 Remote writes are separately gated. A native TLS port-6000 facade translates
 BambuTunnelLocal framing and emits a list-change notice after mutations.

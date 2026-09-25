@@ -1,0 +1,43 @@
+[package]
+name = "bambu-cloud-lan-proxy"
+version = "0.5.0"
+edition = "2024"
+license = "MIT"
+description = "A standalone local Bambu-shaped LAN facade backed by Bambu cloud sessions"
+
+[dependencies]
+anyhow = "1.0"
+axum = { version = "0.8", features = ["json", "tokio"] }
+bytes = "1.10"
+clap = { version = "4.5", features = ["derive", "env"] }
+futures-util = "0.3"
+hex = "0.4"
+md-5 = "0.10"
+percent-encoding = "2.3"
+regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "multipart", "rustls-tls", "stream"] }
+rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider"] }
+rust-embed = "8.7"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+subtle = "2.6"
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring", "tls12"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+tower-http = { version = "0.6", features = ["catch-panic", "compression-gzip", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2.5"
+uuid = { version = "1.18", features = ["v4"] }
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.21"
+
+[profile.release]
+lto = "thin"
+strip = true

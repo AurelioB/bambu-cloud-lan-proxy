@@ -46,9 +46,10 @@ services:
       start_period: 10s
 
   ftps:
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     build:
       context: .
-      dockerfile: Dockerfile.ftps
+      dockerfile: Dockerfile.proxy
       args:
         PROXY_VERSION: ${PROXY_VERSION:-dev}
     depends_on:
@@ -66,18 +67,11 @@ services:
       FTPS_ROOT: /staging
       FTPS_MAX_UPLOAD_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
       FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
-      FTPS_REMOTE_API_URL: http://gateway:4844/internal/cloud-lan-proxy/storage
-      FTPS_REMOTE_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
-      FTPS_REMOTE_SERIALS: ${PROXY_PRINTERS:-}
-      FTPS_REMOTE_CACHE_DIR: /remote-cache
-      FTPS_REMOTE_CATALOG_TTL: ${PROXY_STORAGE_CATALOG_TTL:-30}
-      FTPS_REMOTE_ALLOW_UPLOAD: ${PROXY_STORAGE_ALLOW_UPLOAD:-false}
-      FTPS_REMOTE_ALLOW_DELETE: ${PROXY_STORAGE_ALLOW_DELETE:-false}
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    command: ["ftps"]
     volumes:
       - ./data/proxy/runtime/certs:/secrets/certs:ro
       - ./data/staging:/staging
-      - ./data/remote-cache:/remote-cache
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -89,18 +83,19 @@ services:
     healthcheck:
       test:
         - CMD
-        - python
+        - sh
         - -c
-        - import socket,ssl; c=ssl._create_unverified_context(); s=c.wrap_socket(socket.socket(),server_hostname='localhost'); s.settimeout(3); s.connect(('127.0.0.1',9990)); assert s.recv(4).startswith(b'220 '); s.close()
+        - timeout 4 openssl s_client -connect 127.0.0.1:9990 </dev/null >/dev/null 2>&1
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
 
   camera:
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     build:
       context: .
-      dockerfile: Dockerfile.camera
+      dockerfile: Dockerfile.proxy
       args:
         PROXY_VERSION: ${PROXY_VERSION:-dev}
     depends_on:
@@ -121,8 +116,9 @@ services:
       CAMERA_LISTEN_PORT: "8322"
     volumes:
       - ./data/proxy/runtime/certs:/secrets/certs:ro
-      - ./data/gateway/printers.json:/gateway/printers.json:ro
+      - ./data/gateway:/data:ro
       - ./data/camera:/state
+    command: ["camera"]
     user: "1883:1883"
     restart: unless-stopped
     read_only: true
@@ -135,16 +131,16 @@ services:
     healthcheck:
       test:
         - CMD
-        - python
+        - sh
         - -c
-        - import socket,ssl; h=socket.gethostbyname('host.docker.internal'); c=ssl._create_unverified_context(); s=c.wrap_socket(socket.socket(),server_hostname=h); s.settimeout(3); s.connect((h,8322)); s.close()
+        - timeout 4 openssl s_client -connect host.docker.internal:8322 </dev/null >/dev/null 2>&1
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 30s
 
   native-files:
-    image: bambu-cloud-lan-proxy-ftps
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       gateway:
         condition: service_healthy
@@ -159,16 +155,14 @@ services:
       FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
       FTPS_REMOTE_API_URL: http://gateway:4844/internal/cloud-lan-proxy/storage
       FTPS_REMOTE_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
-      FTPS_REMOTE_SERIALS: ${PROXY_PRINTERS:-}
       FTPS_REMOTE_CACHE_DIR: /remote-cache
-      FTPS_REMOTE_CATALOG_TTL: ${PROXY_STORAGE_CATALOG_TTL:-30}
       NATIVE_FILES_PORT: "6000"
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
     volumes:
       - ./data/proxy/runtime/certs:/secrets/certs:ro
       - ./data/staging:/staging
       - ./data/remote-cache:/remote-cache
-    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.native_files"]
+    command: ["native-files"]
     user: "1883:1883"
     restart: unless-stopped
     read_only: true
@@ -181,16 +175,16 @@ services:
     healthcheck:
       test:
         - CMD
-        - python
+        - sh
         - -c
-        - import socket,ssl; c=ssl._create_unverified_context(); s=c.wrap_socket(socket.socket(),server_hostname='localhost'); s.settimeout(3); s.connect(('127.0.0.1',6000)); s.close()
+        - timeout 4 openssl s_client -connect 127.0.0.1:6000 </dev/null >/dev/null 2>&1
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 15s
 
   discovery:
-    image: bambu-cloud-lan-proxy-ftps
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       native-files:
         condition: service_healthy
@@ -202,7 +196,7 @@ services:
       DISCOVERY_PRINTER_NAME: ${PROXY_DISCOVERY_NAME:-Bambu Cloud LAN Proxy}
       DISCOVERY_TARGET: ${PROXY_DISCOVERY_TARGET:-127.0.0.1}
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
-    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.discovery"]
+    command: ["discovery"]
     user: "1883:1883"
     restart: unless-stopped
     read_only: true
@@ -214,7 +208,7 @@ services:
       - no-new-privileges:true
 
   camera-ingress:
-    image: bambu-cloud-lan-proxy-camera
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       camera:
         condition: service_healthy
@@ -226,7 +220,7 @@ services:
       TCP_RELAY_UPSTREAM_HOST: host.docker.internal
       TCP_RELAY_UPSTREAM_PORT: "8322"
       TCP_RELAY_LISTEN_PORT: "8322"
-    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.tcp_relay"]
+    command: ["tcp-relay"]
     user: "1883:1883"
     restart: unless-stopped
     read_only: true
@@ -239,16 +233,16 @@ services:
     healthcheck:
       test:
         - CMD
-        - python
+        - sh
         - -c
-        - import socket; s=socket.create_connection(('127.0.0.1',8322),3); s.close()
+        - timeout 3 bash -c '</dev/tcp/127.0.0.1/8322'
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
 
   local-status:
-    image: bambu-cloud-lan-proxy-gateway
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       mqtt:
         condition: service_healthy
@@ -259,9 +253,9 @@ services:
       LOCAL_STATUS_STATE_DIR: /state
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
     volumes:
-      - ./data/gateway/printers.json:/gateway/printers.json:ro
+      - ./data/gateway:/data:ro
       - ./data/local-status:/state
-    entrypoint: ["python", "-m", "bambu_cloud_lan_proxy.local_status"]
+    command: ["local-status"]
     user: "${PUID:-1000}:${PGID:-1000}"
     restart: unless-stopped
     read_only: true
@@ -273,6 +267,7 @@ services:
       - no-new-privileges:true
 
   gateway:
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     build:
       context: .
       dockerfile: Dockerfile.proxy
@@ -312,6 +307,7 @@ services:
       CLOUD_LAN_PROXY_LOCAL_STATUS_STATE_DIR: /local-status
     volumes:
       - ./data/gateway:/data
+      - ./data/proxy/export:/proxy-ca:ro
       - ./data/staging:/staging:ro
       - ./data/remote-cache:/remote-cache
       - ./data/local-status:/local-status:ro
@@ -327,9 +323,9 @@ services:
     healthcheck:
       test:
         - CMD
-        - python
+        - sh
         - -c
-        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:4844/api/health', timeout=3); urllib.request.urlopen('http://127.0.0.1:4844/api/cloud/auth/status', timeout=3)
+        - curl -fsS http://127.0.0.1:4844/api/health >/dev/null && curl -fsS http://127.0.0.1:4844/api/cloud/auth/status >/dev/null
       interval: 30s
       timeout: 5s
       retries: 5

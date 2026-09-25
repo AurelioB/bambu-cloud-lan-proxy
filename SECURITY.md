@@ -25,7 +25,8 @@ real physical prints and should be treated as write access to the printer.
 The following paths contain credentials and are ignored by Git:
 
 - `.env` — the local MQTT access code
-- `data/gateway/` — Bambu Gateway account session data
+- `data/gateway/` — Rust proxy account/plugin state (the directory name is
+  retained for deployment compatibility; Bambu Gateway is not installed)
 - `data/proxy/certs/ca.key` — the local proxy CA private key
 - `data/proxy/certs/server.key` — the local TLS server private key
 - `data/proxy/auth/passwords` — the Mosquitto password database

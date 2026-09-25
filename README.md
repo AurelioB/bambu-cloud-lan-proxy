@@ -1,328 +1,114 @@
 # Bambu Cloud LAN Proxy
 
-A private-by-default bridge that makes a printer connected through **Bambu
-Cloud** look like a local Bambu MQTT endpoint. Its first target is monitoring a
-Bambu Lab H2C from [Bambuddy](https://github.com/maziggy/bambuddy) without
-turning off Bambu Handy.
+A standalone, Docker Compose deployable LAN facade for a cloud-paired Bambu Lab printer. It lets Bambu Handy remain connected through Bambu Cloud while local software such as Bambuddy sees printer-shaped LAN services.
 
-```text
-H2C ↔ Bambu Cloud ↔ bundled cloud-session core ↔ local LAN facade ↔ clients
- ├──── read-only LAN MQTT (preferred while reachable) ─────────────┤
- └──── LAN-only RTSPS camera ───────── local RTSPS :322 ──────────┘
-```
+The application is Rust with an embedded Svelte 5/shadcn-svelte admin console. It does not install, import, fork, or run Bambu Gateway. The only proprietary component is Bambu's official networking plugin, downloaded at startup from Bambu's HTTPS endpoint and accepted only when its version and SHA-256 hashes match the reviewed pins in `src/plugin_install.rs`. A small C++ process isolates that plugin's C++ ABI from safe Rust.
 
-The H2C stays in normal cloud mode. This repository implements its own small,
-headless cloud-session service and native adapter for Bambu's official plugin.
-It does not include, import, patch, build, or install Bambu Gateway. Gateway
-was reviewed as a protocol reference; attribution remains in
-[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
+## What it exposes
 
-The first-party replacement is under integration validation. Unit tests and
-isolated native-plugin initialization have passed; a fresh cloud login,
-printer writes, file transfer and print dispatch through this new runtime still
-need end-to-end validation before replacing an existing deployment. Previous
-live checks against the Gateway-based runtime do not validate the rewrite.
+- MQTT over TLS on `8883`, with cloud reports and policy-controlled signed commands.
+- Implicit FTPS on `990` plus passive ports `50000-50009` for staged jobs.
+- Bambu's TLS native-file protocol on `6000` for previous jobs, timelapses, downloads, optional uploads, and optional deletion.
+- RTSPS camera access on `322`, backed by the printer's local liveview and protected with certificate pinning.
+- SSDP discovery for LAN clients.
+- An authenticated admin console on `127.0.0.1:4844` by default.
+- Optional local, read-only MQTT telemetry with automatic cloud-report fallback.
 
-## What works
+Writes use Bambu Cloud and the official plugin's device certificate. Read-only status normally comes from the cloud; if the printer's LAN MQTT endpoint is configured, fresh local reports take precedence. Camera traffic always uses the local printer because Bambu's cloud path does not provide the LAN RTSPS stream.
 
-- Local-first, certificate-pinned read-only H2C telemetry with automatic cloud
-  fallback (temperatures, progress, AMS, errors, versions, and task state)
-- Bambuddy's `pushall`, `get_version`, `get_accessories`, and
-  `extrusion_cali_get` queries
-- Optional signed pause, resume, speed, and light controls
-- Optional signed passthrough for the complete MQTT request envelope used by
-  Bambuddy (`full_control` mode)
-- Implicit FTPS on port 990 with protected passive data channels
-- Staged file listing, upload, size, download, rename, and delete operations
-- Read-through browsing and downloads of the printer's previous jobs,
-  timelapses, and recordings through the official cloud media tunnel
-- Studio-compatible TLS file service on port 6000: media ability discovery,
-  lists, downloads, 3MF metadata/thumbnails, cancellation, guarded upload and
-  delete, and change notification
-- Optional physical-storage upload/delete and existing-file reprint, each
-  protected by its own configuration gate
-- Bambu SSDP-shaped discovery and per-serial FTPS namespaces
-- Bambuddy archive reads for both staged files and files already on the printer
-- Authenticated RTSPS camera relay on port 322 when the printer's **LAN-only
-  liveview** endpoint is enabled and reachable
-- Optional `project_file` handoff to the signed cloud-print pipeline,
-  including plate, AMS, H2C nozzle mapping, and print-option translation
-- Bambu Handy at the same time, because the printer remains cloud-connected
-- Automatic local TLS CA/server certificate and MQTT credential creation
-- A standalone Docker Compose deployment with its cloud-session source and
-  container foundations pinned in this repository
+## Requirements
 
-The default is deliberately safe: status is read-only and direct cloud-print
-dispatch is disabled. FTPS and staged-file/archive access are available without
-enabling printer writes. Cloud printing through Handy or Studio remains
-available independently.
+- Linux x86-64. The reviewed Bambu plugin build is x86-64 ELF.
+- Docker Engine with Compose v2.
+- The printer and proxy host on a trusted private network.
+- For camera/local telemetry: the printer's LAN-only liveview enabled, its LAN IP, and its eight-character access code. The printer itself can remain cloud-paired; do not enable printer LAN-only mode.
 
-The camera path is deliberately local: it pulls the printer's RTSPS liveview,
-pins the physical camera certificate, and re-publishes one authenticated stream
-to local clients. It does not proxy Bambu's cloud-video service. Consequently,
-camera access requires the printer to remain reachable on LAN port 322 and the
-**LAN-only liveview** toggle to stay enabled. The proprietary cloud camera path
-is not re-published by this project.
+Do not publish ports `322`, `990`, `6000`, `8883`, the passive FTPS range, or the admin console to the internet.
 
-## Quick start
-
-Requirements: Docker Engine with Compose v2 and an x86_64 Linux host. Clone the repo,
-then run:
+## Install
 
 ```sh
+git clone git@github.com:AurelioB/bambu-cloud-lan-proxy.git
+cd bambu-cloud-lan-proxy
 ./scripts/init.sh
+```
+
+Edit `.env` before the first full start:
+
+```dotenv
+PROXY_BIND_IP=192.168.1.20
+PROXY_MODE=full_control
+PROXY_ALLOW_CANCEL=true
+PROXY_CLOUD_PRINT_ENABLED=true
+PROXY_STORAGE_PRINTER_SERIAL=YOUR_SERIAL
+PROXY_PRINTERS=YOUR_SERIAL
+
+CAMERA_PRINTER_SERIAL=YOUR_SERIAL
+CAMERA_UPSTREAM_IP=192.168.1.42
+```
+
+Put the printer's local access code into `data/gateway/printers.json`. The `gateway` name is retained only as an on-disk/Compose compatibility name; it is the Rust service:
+
+```json
+[
+  {
+    "serial": "YOUR_SERIAL",
+    "name": "My H2C",
+    "ip": "192.168.1.42",
+    "access_code": "A1B2C3D4"
+  }
+]
+```
+
+The Rust cloud discovery process preserves `ip` and `access_code` while refreshing the printer name/model.
+
+Start everything:
+
+```sh
 ./scripts/deploy.sh
 ```
 
-The first command creates `.env`, an eight-character local access code, a local
-certificate authority, and the staged filesystem. The second builds and starts
-the bundled cloud-session service, TLS MQTT broker, implicit FTPS, and RTSPS
-camera relay.
+Open `http://127.0.0.1:4844` (or your configured `GATEWAY_BIND_IP:GATEWAY_PORT`) and enter `PROXY_ACCESS_CODE` from `.env`. Under **Bambu account**, open the official sign-in page, complete login, copy the browser's final `http://localhost:13618/?ticket=...` URL, and paste it into the console. Account tokens and certificate material are never shown in the UI.
 
-Sign in using the local setup command:
+## Bambuddy / LAN client setup
 
-```sh
-docker compose exec gateway python -m bambu_cloud_lan_proxy.cloud_setup
-```
-
-It prints a Bambu-hosted sign-in link and accepts the final `localhost:13618`
-callback URL through hidden input. There is no Gateway dashboard. The daemon
-exposes authenticated setup/status APIs on port 4844; the Compose service name
-`gateway`, `GATEWAY_*` port settings, and `data/gateway/` directory are retained
-only to preserve existing deployment configuration and plugin session state.
-
-If a Gateway deployment is already signed in, import it before starting this
-stack:
-
-```sh
-./scripts/import-gateway-data.sh /path/to/existing/gateway-data
-```
-
-The destination must be empty; the script refuses to merge credentials.
-
-## Add the cloud printer to Bambuddy
-
-Use **Printers → Add printer → Manual** and enter:
-
-| Bambuddy field | Value |
-| --- | --- |
-| IP address | `127.0.0.2` when Bambuddy uses host networking on this host |
-| Serial number | Exact physical printer serial from the printer or Studio |
-| Access code | `PROXY_ACCESS_CODE` from `.env` |
-| Model | The physical model, for example H2C |
-
-The MQTT username is always `bblp`, matching a physical printer. Bambuddy
-disables TLS verification for printer MQTT, so it does not need the generated
-CA. Other clients can obtain the public certificate with:
+Use `PROXY_BIND_IP` as the printer address, the printer serial, username `bblp`, and `PROXY_ACCESS_CODE` as the access code. Install the generated proxy CA if the client validates the self-signed LAN certificate:
 
 ```sh
 ./scripts/export-ca.sh
 ```
 
-If Bambuddy is on another machine, set `PROXY_BIND_IP` in `.env` to this
-Docker host's trusted LAN or Tailscale address, rerun `./scripts/init.sh` to
-issue a certificate for that address, and redeploy. Allow TCP 322, 6000, 8883,
-990, and 50000-50009 only from trusted clients.
+The public CA is safe to distribute to your LAN client. Never copy files from `data/gateway/bambu-plugin/`, plugin state, `.env`, or the server private key.
 
-After deployment, Bambuddy's MQTT and FTPS diagnostics should pass. Its camera
-diagnostic passes whenever the printer's local liveview endpoint is reachable.
-The downstream camera username is `bblp` and it uses the same proxy access code.
+## Safety controls
 
-Despite Bambuddy's historical wording, the file service is implicit **FTPS**,
-not SSH SFTP. Local files and uploads live in `data/staging/`. The standard
-`cache/`, `timelapse/`, and `video/` directories also merge in read-only files
-reported by the printer through Studio's official cloud media tunnel. A remote
-file is downloaded only when a client retrieves it, validated by size and the
-printer-provided MD5, then removed from the transient cache. Local files win a
-same-name collision. The default keeps printer storage read-only. Enable
-physical mutations only for trusted local clients:
+Policy can be changed in the admin console and persists across restarts:
 
-```dotenv
-PROXY_STORAGE_ALLOW_UPLOAD=true
-PROXY_STORAGE_ALLOW_DELETE=true
-PROXY_STORAGE_ALLOW_REPRINT=true
-```
+- `read_only`: queries only.
+- `controls`: pause, resume, speed, and light; cancellation is separately gated.
+- `full_control`: forwards valid signed commands through the official plugin.
 
-With upload enabled, `STOR /cache/<name>` and native port-6000 uploads mirror
-the validated file into printer storage. Delete can remove a remote-only entry.
-Reprint accepts a printer-resident `file:///` job and additionally requires
-`PROXY_MODE=full_control`.
+Cloud print submission, remote reprint, storage upload, storage deletion, and cancellation are independent opt-ins. A timed-out cloud write is recorded as an unknown outcome and is never automatically replayed. Staged jobs are confined to `/staging`, size checked, ZIP validated, copied to an immutable snapshot, and serialized per printer.
 
-Enable this for one printer with:
-
-```dotenv
-PROXY_STORAGE_PRINTER_SERIAL=YOUR_SERIAL
-```
-
-The cloud file path does not require Developer Mode or physical LAN-mode ports.
-It does require the printer and proxy cloud session to be online.
-
-For multiple allowed printers, FTPS adds
-`/printers/<serial>/{cache,timelapse,video}`. The primary printer also retains
-the standard paths Bambuddy expects.
-
-## Direct Bambuddy queue dispatch
-
-FTPS staging is always on, but turning a staged file into a physical print is a
-separate explicit opt-in. First wait until the printer is idle, then set:
-
-```dotenv
-PROXY_CLOUD_PRINT_ENABLED=true
-```
-
-Apply it with:
-
-```sh
-docker compose up -d --build gateway
-```
-
-The facade acknowledges Bambuddy's `project_file`, waits for either observed
-slicer ordering (FTP-first or MQTT-first), snapshots the completed 3MF, and
-hands it to Bambu's official cloud plugin. It refuses the job when the
-printer is offline, busy, the file is missing/corrupt/too large, another cloud
-submission is active, or the exact MQTT request is replayed. The physical
-printer never downloads `ftp://127.0.0.2/...`; the plugin uploads the snapshot to
-Bambu's cloud-print path and signs the dispatch.
-
-`PROXY_MODE=read_only` may remain in place: the cloud-print switch is
-independent. Set `PROXY_MODE=controls` only if Bambuddy also needs its optional
-pause/resume/speed/light and pre-print control paths. Cancel still needs
-`PROXY_ALLOW_CANCEL=true`.
-
-Files uploaded through the facade remain under `data/staging/`, so Bambuddy can
-download them for covers and archives. A print started in Handy or directly in
-Studio may have no corresponding staged file; the official print API exposes
-cloud upload/dispatch, but no API to pull the source 3MF back into this
-filesystem. Those jobs still monitor normally, but automatic 3MF archival can
-only succeed when Bambuddy already has a local copy or the job traversed this
-proxy.
-
-## Policy modes
-
-Configure the mode in `.env`, then run `docker compose up -d`:
-
-| Mode | Behavior |
-| --- | --- |
-| `read_only` | Startup/status queries only; default and recommended initially |
-| `controls` | Adds pause, resume, print-speed, and chamber/work light |
-| `full_control` | Signed passthrough for structurally valid MQTT commands; intended for a trusted Bambuddy instance |
-| `unsafe` | Legacy development mode for unknown envelopes; prefer `full_control` |
-
-Cancel is destructive enough to require a second switch:
-
-```dotenv
-PROXY_MODE=controls
-PROXY_ALLOW_CANCEL=true
-```
-
-For the closest MQTT approximation to LAN mode, while the printer is idle:
-
-```dotenv
-PROXY_MODE=full_control
-PROXY_ALLOW_CANCEL=true
-PROXY_CLOUD_PRINT_ENABLED=true
-```
-
-`full_control` sends Bambuddy's request envelope through Bambu's official
-network plugin, which performs cloud authentication and signing. It permits
-real motion, heating, G-code, calibration, and other commands supported by the
-cloud service. It cannot make a cloud-rejected or LAN-only firmware operation
-work, so this remains a LAN-shaped hybrid rather than literal firmware LAN mode.
-
-When controls or cloud printing are active, the facade changes only the
-downstream `fun` capability bit so Bambuddy knows the **facade** accepts writes.
-It does not alter what the cloud printer reports upstream or change the
-physical printer's LAN/Developer Mode setting.
-
-Restrict a multi-printer cloud account with a comma-separated allowlist:
-
-```dotenv
-PROXY_PRINTERS=SERIAL_ONE,SERIAL_TWO
-```
-
-## Verify and troubleshoot
+## Operations
 
 ```sh
 docker compose ps
-docker compose logs --tail=200 gateway mqtt ftps camera camera-ingress
-./scripts/verify-mqtt.sh YOUR_PRINTER_SERIAL
+docker compose logs --tail=200 gateway mqtt ftps native-files camera local-status
 ./scripts/verify-ftps.sh
-./scripts/verify-ftps.sh --remote
-./scripts/verify-camera.sh
 ./scripts/verify-native.sh
-```
-
-The MQTT verification waits for one real cloud report and sends no printer
-command. The normal FTPS verification round-trips one tiny synthetic ZIP/3MF
-through staging and deletes it. `--remote` additionally lists the printer's
-timelapses and downloads the smallest one without changing printer storage.
-
-- **Bambuddy connects but shows no data:** confirm its serial matches the printer
-  exactly; MQTT topics are case-sensitive. Wait up to 30 seconds for the proxy's
-  periodic full snapshot.
-- **Authentication refused:** copy the eight-character code from `.env` again,
-  then rerun `./scripts/init.sh` and restart `mqtt` if it changed.
-- **FTPS/port 990 fails:** confirm `ftps` is healthy and that passive ports
-  50000-50009 are reachable from Bambuddy as well as port 990.
-- **Printer files are missing:** set `PROXY_STORAGE_PRINTER_SERIAL`, confirm it
-  is allowed by `PROXY_PRINTERS`, and verify that both the printer and the proxy's
-  cloud account are online. Listings are cached for 30 seconds by default.
-- **Queue upload succeeds but no print starts:** direct dispatch is off by
-  default. Check `PROXY_CLOUD_PRINT_ENABLED`, then inspect the service logs. A busy
-  printer is intentionally refused rather than risking its active job.
-- **Camera check fails:** confirm LAN-only liveview is enabled and
-  `CAMERA_UPSTREAM_IP` is current, then test that the Docker host can reach that
-  IP on TCP 322. Status may still work through cloud while this local path is
-  down. If port 322 is unavailable, use Bambuddy's external-camera fallback.
-- **Proxy has no printers:** complete Bambu cloud sign-in and confirm the
-  correct `BAMBU_CLOUD_REGION` (`US` or `CN`).
-
-## Why no Bambu certificate extraction?
-
-[open-bamboo-networking](https://github.com/ClusterM/open-bamboo-networking)
-can fetch slicer-side credentials because it replaces the slicer's network
-plugin. This proxy has a different boundary: its bundled cloud-session core
-loads the official plugin and owns its cloud credentials. Extracting or shipping
-Bambu's shared private signing material would add both security and maintenance
-risk without helping Bambuddy.
-
-The Compose bootstrap instead creates the only certificate these new endpoints
-need: a private local CA and one server certificate shared by MQTT, FTPS, and
-RTSPS.
-Runtime containers receive only a copy of the server material; the CA signing
-key is not mounted into them. See [the architecture notes](docs/architecture.md)
-for the separation.
-
-## Development
-
-```sh
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e '.[dev]'
+./scripts/verify-camera.sh
 ./scripts/check.sh
-docker compose build gateway
 ```
 
-All application source used by the image is built from this checkout. The
-cloud service is Python/asyncio plus a focused C++ plugin shim. There is no
-vendored Gateway application, web frontend, or monkeypatch. Ordinary packages
-(including nlohmann/json) are dependencies, not copied Gateway source.
+Camera and local MQTT certificates use trust-on-first-use pins under `data/camera/` and `data/local-status/`. If the printer legitimately replaces a certificate, compare the new fingerprint out of band before removing the corresponding pin file.
 
-Run tests against the new image without a printer or network:
+To update, pull the reviewed source and rebuild. Plugin updates intentionally fail closed until their version and hashes are reviewed and updated in source.
 
-```sh
-docker build -f Dockerfile.proxy --target test -t proxy-test .
-docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace \
-  -e PYTHONPATH=/workspace/src proxy-test
-```
+## Architecture and limits
 
-See [the independence review and Rust assessment](docs/gateway-independence.md)
-for the replacement scope, safety boundaries, and migration validation plan.
+See [docs/architecture.md](docs/architecture.md), [docs/gateway-independence.md](docs/gateway-independence.md), and [docs/rust-migration-plan.md](docs/rust-migration-plan.md).
 
-The runtime still downloads Bambu Lab's official, version-pinned networking
-plugin from Bambu's CDN when needed. That proprietary component and Bambu's
-cloud service are unavoidable external runtime dependencies for signed cloud
-control; they are not dependencies on the Bambu Gateway project.
+This is an independent community project, not affiliated with Bambu Lab, Bambu Gateway, or Bambuddy. Cloud behavior is subject to Bambu's service and account policies. Prefer official local interfaces whenever Bambu makes them available.
 
-This project is independent and is not affiliated with or endorsed by Bambu
-Lab, Bambu Gateway, or Bambuddy.
+License: MIT. Third-party notices are in `THIRD_PARTY_NOTICES`.
