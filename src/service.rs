@@ -34,6 +34,7 @@ pub struct Session {
     pub signed_in: AtomicBool,
     pub connected: AtomicBool,
     connect_lock: Mutex<()>,
+    registry_lock: Mutex<()>,
     last_refresh: Mutex<Instant>,
 }
 
@@ -106,6 +107,7 @@ impl Session {
             signed_in: AtomicBool::new(false),
             connected: AtomicBool::new(false),
             connect_lock: Mutex::new(()),
+            registry_lock: Mutex::new(()),
             last_refresh: Mutex::new(Instant::now() - Duration::from_secs(600)),
         });
         let events = session.clone();
@@ -116,6 +118,7 @@ impl Session {
     }
 
     pub async fn refresh_devices(&self) -> Result<()> {
+        let _registry_guard = self.registry_lock.lock().await;
         let result = checked(&self.host, "get_user_print_info", json!({})).await?;
         let devices = result
             .get("devices")
@@ -186,6 +189,90 @@ impl Session {
             &serde_json::to_vec_pretty(&registry.into_values().collect::<Vec<_>>())?,
         )?;
         *self.last_refresh.lock().await = Instant::now();
+        Ok(())
+    }
+
+    pub async fn configure_endpoint(
+        &self,
+        serial: &str,
+        virtual_ip: &str,
+        physical_ip: &str,
+        physical_access_code: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let serial = serial.trim().to_ascii_uppercase();
+        if !self.printers.read().await.contains_key(&serial) {
+            bail!("printer is not present in the connected account")
+        }
+        let virtual_ip = virtual_ip.trim();
+        if enabled {
+            let address: Ipv4Addr = virtual_ip
+                .parse()
+                .context("virtual IP must be an IPv4 address")?;
+            if !(address.is_private() || address.is_loopback()) {
+                bail!("virtual IP must be private or loopback")
+            }
+        } else if !virtual_ip.is_empty() {
+            let _: Ipv4Addr = virtual_ip
+                .parse()
+                .context("virtual IP must be an IPv4 address")?;
+        }
+        let physical_ip = physical_ip.trim();
+        if !physical_ip.is_empty() {
+            let address: IpAddr = physical_ip
+                .parse()
+                .context("physical IP must be an IP address")?;
+            let safe = match address {
+                IpAddr::V4(value) => value.is_private() || value.is_loopback(),
+                IpAddr::V6(value) => value.is_unique_local() || value.is_loopback(),
+            };
+            if !safe {
+                bail!("physical IP must be private or loopback")
+            }
+        }
+        if !physical_access_code.is_empty()
+            && (physical_access_code.len() != 8
+                || !physical_access_code
+                    .bytes()
+                    .all(|v| v.is_ascii_alphanumeric()))
+        {
+            bail!("physical access code must be eight letters or digits")
+        }
+        let _guard = self.registry_lock.lock().await;
+        let path = self.data.join("printers.json");
+        let mut registry: Vec<Value> = serde_json::from_slice(&fs::read(&path)?)?;
+        if enabled
+            && registry.iter().any(|entry| {
+                !entry
+                    .get("serial")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(&serial)
+                    && entry.get("endpoint_enabled").and_then(Value::as_bool) != Some(false)
+                    && entry.get("virtual_ip").and_then(Value::as_str) == Some(virtual_ip)
+            })
+        {
+            bail!("virtual IP is already assigned to another printer")
+        }
+        let entry = registry
+            .iter_mut()
+            .find(|entry| {
+                entry
+                    .get("serial")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(&serial)
+            })
+            .context("printer registry entry is missing")?;
+        entry["virtual_ip"] = virtual_ip.into();
+        entry["ip"] = physical_ip.into();
+        entry["endpoint_enabled"] = enabled.into();
+        if !physical_access_code.is_empty() {
+            entry["access_code"] = physical_access_code.into();
+        }
+        write_private_atomic(&path, &serde_json::to_vec_pretty(&registry)?)?;
         Ok(())
     }
 

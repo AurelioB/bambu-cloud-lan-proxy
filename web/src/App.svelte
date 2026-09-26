@@ -4,8 +4,12 @@
   import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import FolderIcon from "@lucide/svelte/icons/folder";
   import LogInIcon from "@lucide/svelte/icons/log-in";
+  import MoonIcon from "@lucide/svelte/icons/moon";
+  import NetworkIcon from "@lucide/svelte/icons/network";
+  import PrinterIcon from "@lucide/svelte/icons/printer";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
+  import SunIcon from "@lucide/svelte/icons/sun";
   import VideoIcon from "@lucide/svelte/icons/video";
   import * as Alert from "$lib/components/ui/alert";
   import { Badge } from "$lib/components/ui/badge";
@@ -13,15 +17,15 @@
   import * as Card from "$lib/components/ui/card";
   import * as Field from "$lib/components/ui/field";
   import { Input } from "$lib/components/ui/input";
-  import { Separator } from "$lib/components/ui/separator";
   import { Spinner } from "$lib/components/ui/spinner";
   import { Switch } from "$lib/components/ui/switch";
   import * as Tabs from "$lib/components/ui/tabs";
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
   import { Toaster } from "$lib/components/ui/sonner";
   import { toast } from "svelte-sonner";
+  import { ModeWatcher, mode, toggleMode } from "mode-watcher";
   import { onMount } from "svelte";
-  import { api, type Overview, type Settings } from "$lib/api";
+  import { api, type Overview, type Printer, type Settings } from "$lib/api";
 
   let accessCode = $state(sessionStorage.getItem("proxy-access-code") ?? "");
   let callbackUrl = $state("");
@@ -34,7 +38,8 @@
     if (!accessCode) return;
     loading = true;
     try {
-      overview = await api<Overview>("/api/admin/overview", accessCode);
+      const next = await api<Overview>("/api/admin/overview", accessCode);
+      overview = { ...next, printers: next.printers.map((printer) => ({ ...printer, physical_access_code: "" })) };
       settings = await api<Settings>("/api/admin/settings", accessCode);
       authenticated = true;
       sessionStorage.setItem("proxy-access-code", accessCode);
@@ -84,6 +89,24 @@
     } catch (error) { toast.error(error instanceof Error ? error.message : "Could not export CA"); }
   }
 
+  async function saveEndpoint(printer: Printer) {
+    loading = true;
+    try {
+      await api(`/api/admin/printers/${encodeURIComponent(printer.serial)}/endpoint`, accessCode, {
+        method: "PUT",
+        body: JSON.stringify({
+          virtual_ip: printer.virtual_ip,
+          physical_ip: printer.physical_ip,
+          physical_access_code: printer.physical_access_code ?? "",
+          enabled: printer.endpoint_enabled
+        })
+      });
+      toast.success("Endpoint saved. Apply networking to refresh host addresses and TLS.");
+      await refresh();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Endpoint was not saved"); }
+    finally { loading = false; }
+  }
+
   onMount(() => {
     void refresh();
     const timer = window.setInterval(() => authenticated && void refresh(), 15_000);
@@ -91,21 +114,31 @@
   });
 </script>
 
+<ModeWatcher themeColors={{ light: "#ffffff", dark: "#252525" }} />
 <Toaster richColors />
 <main class="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-8 md:px-8">
   <header class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
     <div class="flex flex-col gap-1">
-      <p class="text-sm font-medium text-muted-foreground">H2C local control plane</p>
+      <p class="text-sm font-medium text-muted-foreground">Local control plane for Bambu Lab printers</p>
       <h1 class="text-2xl font-semibold tracking-tight">Bambu Cloud LAN Proxy</h1>
     </div>
-    {#if authenticated}
-      <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2">
+      <Button
+        variant="outline"
+        size="icon-sm"
+        onclick={toggleMode}
+        aria-label={mode.current === "dark" ? "Use light theme" : "Use dark theme"}
+        title={mode.current === "dark" ? "Use light theme" : "Use dark theme"}
+      >
+        {#if mode.current === "dark"}<SunIcon />{:else}<MoonIcon />{/if}
+      </Button>
+      {#if authenticated}
         <Badge variant={overview?.healthy ? "secondary" : "destructive"}>{overview?.healthy ? "Proxy healthy" : "Needs attention"}</Badge>
         <Button variant="outline" size="sm" onclick={refresh} disabled={loading}>
           {#if loading}<Spinner data-icon="inline-start" />{:else}<RefreshCwIcon data-icon="inline-start" />{/if}Refresh
         </Button>
-      </div>
-    {/if}
+      {/if}
+    </div>
   </header>
 
   {#if !authenticated}
@@ -130,15 +163,30 @@
           <Card.Root size="sm"><Card.Header><Card.Title>Local camera</Card.Title><Card.Action><VideoIcon /></Card.Action></Card.Header><Card.Content><Badge variant="outline">LAN dependent</Badge></Card.Content></Card.Root>
         </section>
         <Card.Root>
-          <Card.Header><Card.Title>Printers</Card.Title><Card.Description>Account-bound printers currently exposed to local clients.</Card.Description></Card.Header>
+          <Card.Header>
+            <Card.Title>Printers</Card.Title>
+            <Card.Description>{overview?.printers.length ?? 0} account-bound {(overview?.printers.length ?? 0) === 1 ? "printer" : "printers"} exposed to local clients.</Card.Description>
+          </Card.Header>
           <Card.Content>
             {#if overview?.printers.length}
-              <div class="flex flex-col gap-3">
+              <div class="grid gap-4 md:grid-cols-2">
                 {#each overview.printers as printer (printer.serial)}
-                  <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div class="flex flex-col gap-1"><span class="font-medium">{printer.name || printer.serial}</span><span class="font-mono text-xs text-muted-foreground">{printer.serial}</span></div>
-                    <div class="flex flex-wrap gap-2"><Badge variant={printer.online ? "secondary" : "outline"}>{printer.online ? "Online" : "Offline"}</Badge><Badge variant="outline">{printer.state}</Badge><Badge variant={printer.secure_control ? "secondary" : "outline"}>{printer.secure_control ? "Control ready" : "Awaiting certificate"}</Badge></div>
-                  </div><Separator />
+                  <Card.Root size="sm">
+                    <Card.Header>
+                      <Card.Title>{printer.name || "Bambu Lab printer"}</Card.Title>
+                      <Card.Description>{printer.model || "Model unavailable"}</Card.Description>
+                      <Card.Action><PrinterIcon /></Card.Action>
+                    </Card.Header>
+                    <Card.Content class="flex flex-col gap-3">
+                      <span class="font-mono text-xs text-muted-foreground">{printer.serial}</span>
+                      <div class="flex flex-wrap gap-2">
+                        <Badge variant={printer.online ? "secondary" : "outline"}>{printer.online ? "Online" : "Offline"}</Badge>
+                        <Badge variant="outline">{printer.state}</Badge>
+                        <Badge variant={printer.secure_control ? "secondary" : "outline"}>{printer.secure_control ? "Control ready" : "Awaiting certificate"}</Badge>
+                        <Badge variant={printer.endpoint_enabled && printer.virtual_ip ? "secondary" : "outline"}>{printer.endpoint_enabled && printer.virtual_ip ? printer.virtual_ip : "Endpoint not configured"}</Badge>
+                      </div>
+                    </Card.Content>
+                  </Card.Root>
                 {/each}
               </div>
             {:else}
@@ -187,6 +235,32 @@
           <Card.Root><Card.Header><Card.Title>Bambuddy / Studio</Card.Title><Card.Description>Use the proxy address as a LAN printer.</Card.Description></Card.Header><Card.Content><dl class="flex flex-col gap-3 text-sm"><div class="flex justify-between gap-4"><dt class="text-muted-foreground">MQTT TLS</dt><dd class="font-mono">8883</dd></div><div class="flex justify-between gap-4"><dt class="text-muted-foreground">Implicit FTPS</dt><dd class="font-mono">990</dd></div><div class="flex justify-between gap-4"><dt class="text-muted-foreground">Native files</dt><dd class="font-mono">6000</dd></div><div class="flex justify-between gap-4"><dt class="text-muted-foreground">RTSPS camera</dt><dd class="font-mono">322</dd></div></dl></Card.Content></Card.Root>
           <Card.Root><Card.Header><Card.Title>Client trust</Card.Title><Card.Description>Export only the public proxy CA for clients that validate the LAN certificate.</Card.Description></Card.Header><Card.Content><Button variant="outline" onclick={downloadCa}><ShieldCheckIcon data-icon="inline-start" />Download proxy CA</Button></Card.Content></Card.Root>
           <Alert.Root class="md:col-span-2"><ShieldCheckIcon /><Alert.Title>Private network only</Alert.Title><Alert.Description>Do not expose these printer-shaped ports or this admin console directly to the public internet.</Alert.Description></Alert.Root>
+          <Card.Root class="md:col-span-2">
+            <Card.Header><Card.Title>Printer endpoints</Card.Title><Card.Description>Assign one private virtual IPv4 address to each printer. The physical address and access code enable local camera and telemetry fallback.</Card.Description></Card.Header>
+            <Card.Content>
+              {#if overview?.printers.length}
+                <div class="grid gap-4 lg:grid-cols-2">
+                  {#each overview.printers as printer (printer.serial)}
+                    <Card.Root size="sm">
+                      <Card.Header><Card.Title>{printer.name || "Bambu Lab printer"}</Card.Title><Card.Description>{printer.model || printer.serial}</Card.Description><Card.Action><NetworkIcon /></Card.Action></Card.Header>
+                      <Card.Content>
+                        <Field.Group>
+                          <Field.Field orientation="horizontal"><Field.Content><Field.Title>Enable endpoint</Field.Title><Field.Description>Expose this serial as an independent LAN printer.</Field.Description></Field.Content><Switch id={`endpoint-${printer.serial}`} bind:checked={printer.endpoint_enabled} /></Field.Field>
+                          <Field.Field><Field.Label for={`virtual-${printer.serial}`}>Virtual printer IP</Field.Label><Input id={`virtual-${printer.serial}`} bind:value={printer.virtual_ip} placeholder="192.168.1.201" /><Field.Description>Reserve this address outside the router's DHCP pool.</Field.Description></Field.Field>
+                          <Field.Field><Field.Label for={`physical-${printer.serial}`}>Physical printer IP</Field.Label><Input id={`physical-${printer.serial}`} bind:value={printer.physical_ip} placeholder="192.168.1.50" /><Field.Description>Optional for cloud-only status; required for camera and local telemetry.</Field.Description></Field.Field>
+                          <Field.Field><Field.Label for={`physical-code-${printer.serial}`}>Physical LAN access code</Field.Label><Input id={`physical-code-${printer.serial}`} type="password" bind:value={printer.physical_access_code} placeholder={printer.physical_access_configured ? "Configured — leave blank to keep" : "8-character code"} autocomplete="new-password" /></Field.Field>
+                        </Field.Group>
+                      </Card.Content>
+                      <Card.Footer><Button onclick={() => saveEndpoint(printer)} disabled={loading || (printer.endpoint_enabled && !printer.virtual_ip)}>Save endpoint</Button></Card.Footer>
+                    </Card.Root>
+                  {/each}
+                </div>
+              {:else}
+                <Alert.Root><ActivityIcon /><Alert.Title>No printers available</Alert.Title><Alert.Description>Connect the Bambu account before configuring endpoints.</Alert.Description></Alert.Root>
+              {/if}
+            </Card.Content>
+            <Card.Footer><p class="text-sm text-muted-foreground">After changing addresses, run <code>./scripts/apply-endpoints.sh</code> on the proxy host to add aliases and refresh certificate SANs.</p></Card.Footer>
+          </Card.Root>
         </div>
       </Tabs.Content>
     </Tabs.Root>

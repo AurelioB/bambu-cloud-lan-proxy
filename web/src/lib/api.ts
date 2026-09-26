@@ -1,4 +1,16 @@
-export interface Printer { serial: string; name: string; online: boolean; state: string; secure_control: boolean }
+export interface Printer {
+  serial: string;
+  name: string;
+  model: string;
+  virtual_ip: string;
+  physical_ip: string;
+  physical_access_configured: boolean;
+  physical_access_code: string;
+  endpoint_enabled: boolean;
+  online: boolean;
+  state: string;
+  secure_control: boolean;
+}
 export interface Overview { healthy: boolean; signed_in: boolean; cloud_connected: boolean; region: string; printers: Printer[] }
 export interface Settings {
   mode: "read_only" | "controls" | "full_control";

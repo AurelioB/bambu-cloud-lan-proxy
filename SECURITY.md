@@ -35,10 +35,12 @@ The following paths contain credentials and are ignored by Git:
 - `data/staging/` — user-supplied print files (which may contain private model
   geometry and metadata)
 
-The camera service has host networking solely to reach the local printer, but
-binds its client-facing listener to Docker's private host gateway. A separate
-unprivileged ingress publishes only the authenticated RTSPS byte stream on the
-configured proxy address. Both run read-only, without added Linux capabilities.
+The endpoint manager uses host networking so each printer can bind the same
+standard ports on a different private virtual IP. It runs read-only with only
+`NET_BIND_SERVICE`; it does not have network-administration capability. The
+`endpoint-addresses` one-shot helper has `NET_ADMIN` solely to add explicitly
+configured private `/32` aliases. It mounts the registry read-only, has no
+cloud/plugin state or TLS keys, and exits immediately after reconciliation.
 
 Only `data/proxy/export/bambu-cloud-lan-proxy-ca.crt` is intended for export.
 It is a public certificate, not a private key.

@@ -19,6 +19,15 @@ case "$bind_ip" in
     ;;
 esac
 
+runtime_uid="${PROXY_RUNTIME_UID:-1883}"
+runtime_gid="${PROXY_RUNTIME_GID:-1883}"
+case "$runtime_uid" in
+  ''|*[!0-9]*) echo "PROXY_RUNTIME_UID must be numeric" >&2; exit 2 ;;
+esac
+case "$runtime_gid" in
+  ''|*[!0-9]*) echo "PROXY_RUNTIME_GID must be numeric" >&2; exit 2 ;;
+esac
+
 cert_dir=/data/certs
 auth_dir=/data/auth
 export_dir=/data/export
@@ -58,6 +67,15 @@ if [ ! -s "$cert_dir/ca.key" ] || [ ! -s "$cert_dir/ca.crt" ]; then
 fi
 
 san_marker="DNS:mqtt,DNS:localhost,IP:127.0.0.1,IP:$bind_ip"
+registry="${PROXY_PRINTER_REGISTRY:-/registry/printers.json}"
+if [ -s "$registry" ]; then
+  for endpoint_ip in $(jq -r '.[] | select((.endpoint_enabled // true) and (.virtual_ip // "") != "") | .virtual_ip' "$registry"); do
+    case "$endpoint_ip" in
+      *[!0-9.]*|.*|*.) echo "Ignoring invalid endpoint IP: $endpoint_ip" >&2 ;;
+      *) san_marker="$san_marker,IP:$endpoint_ip" ;;
+    esac
+  done
+fi
 previous_sans=""
 if [ -f "$cert_dir/server.sans" ]; then
   previous_sans="$(sed -n '1p' "$cert_dir/server.sans")"
@@ -100,23 +118,23 @@ cp "$auth_dir/passwords" "$runtime_auth_dir/passwords"
 # directory containing only the server material and hashed password they need.
 chown -R 0:0 "$cert_dir" "$auth_dir"
 chmod 700 "$cert_dir" "$auth_dir"
-chown -R 1883:1883 "$runtime_dir"
-chown -R 1883:1883 "$camera_state_dir"
+chown -R "$runtime_uid":1883 "$runtime_dir"
+chown -R "$runtime_uid":"$runtime_gid" "$camera_state_dir"
 chmod 1777 "$local_status_dir"
-chmod 700 "$runtime_dir" "$runtime_cert_dir" "$runtime_auth_dir"
+chmod 750 "$runtime_dir" "$runtime_cert_dir" "$runtime_auth_dir"
 chmod 700 "$camera_state_dir"
 chmod 1777 "$remote_cache_dir"
 find "$remote_cache_dir" -type f -mtime +1 -delete
 chmod 755 "$export_dir"
 chmod 600 "$cert_dir/ca.key" "$cert_dir/server.key" "$auth_dir/passwords"
 chmod 644 "$cert_dir/ca.crt" "$cert_dir/server.crt" "$export_dir/bambu-cloud-lan-proxy-ca.crt"
-chmod 600 "$runtime_cert_dir/server.key" "$runtime_auth_dir/passwords"
+chmod 640 "$runtime_cert_dir/server.key" "$runtime_auth_dir/passwords"
 chmod 644 "$runtime_cert_dir/ca.crt" "$runtime_cert_dir/server.crt"
 
 # The FTPS container runs as the same fixed numeric uid as Mosquitto. Staged
 # files are world-readable so the unprivileged Gateway uid can snapshot them,
 # while directory writes remain limited to the FTPS service.
-chown -R 1883:1883 "$staging_dir"
+chown -R "$runtime_uid":"$runtime_gid" "$staging_dir"
 find "$staging_dir" -type d -exec chmod 755 {} \;
 find "$staging_dir" -type f -exec chmod 644 {} \;
 

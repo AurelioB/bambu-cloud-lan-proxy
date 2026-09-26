@@ -101,6 +101,15 @@ struct LoginRequest {
     pasted_url: String,
 }
 
+#[derive(Deserialize)]
+struct EndpointRequest {
+    virtual_ip: String,
+    physical_ip: String,
+    #[serde(default)]
+    physical_access_code: String,
+    enabled: bool,
+}
+
 fn authorized(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let supplied = headers
         .get("x-cloud-lan-proxy-key")
@@ -139,25 +148,23 @@ async fn overview(
         .ok()
         .and_then(|v| serde_json::from_slice(&v).ok())
         .unwrap_or_default();
-    let names: HashMap<String, String> = registry
+    let metadata: HashMap<String, Value> = registry
         .into_iter()
-        .filter_map(|v| {
-            Some((
-                v.get("serial")?.as_str()?.to_ascii_uppercase(),
-                v.get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-            ))
-        })
+        .filter_map(|v| Some((v.get("serial")?.as_str()?.to_ascii_uppercase(), v)))
         .collect();
     let printers = state.session.printers.read().await;
     let mut values = Vec::with_capacity(printers.len());
     for (serial, printer) in printers.iter() {
         let status = printer.status().await;
+        let entry = metadata.get(serial);
         values.push(json!({
             "serial": serial,
-            "name": names.get(serial).cloned().unwrap_or_default(),
+            "name": entry.and_then(|v|v.get("name")).and_then(Value::as_str).unwrap_or(""),
+            "model": entry.and_then(|v|v.get("machine_model")).and_then(Value::as_str).unwrap_or(""),
+            "virtual_ip": entry.and_then(|v|v.get("virtual_ip")).and_then(Value::as_str).unwrap_or(""),
+            "physical_ip": entry.and_then(|v|v.get("ip")).and_then(Value::as_str).unwrap_or(""),
+            "physical_access_configured": entry.and_then(|v|v.get("access_code")).and_then(Value::as_str).is_some_and(|v|!v.is_empty()),
+            "endpoint_enabled": entry.and_then(|v|v.get("endpoint_enabled")).and_then(Value::as_bool).unwrap_or(true),
             "online": status.online,
             "state": status.state,
             "secure_control": status.secure_control,
@@ -173,6 +180,27 @@ async fn overview(
         "printers": values,
     }))
     .pipe(Ok)
+}
+
+async fn put_endpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(serial): AxumPath<String>,
+    Json(request): Json<EndpointRequest>,
+) -> Result<Json<Value>, ApiError> {
+    authorized(&state, &headers)?;
+    state
+        .session
+        .configure_endpoint(
+            &serial,
+            &request.virtual_ip,
+            &request.physical_ip,
+            &request.physical_access_code,
+            request.enabled,
+        )
+        .await
+        .map_err(|error| ApiError(StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(Json(json!({"ok":true,"certificate_refresh_required":true})))
 }
 
 trait Pipe: Sized {
@@ -452,6 +480,10 @@ pub async fn serve(session: Arc<Session>) -> Result<()> {
         .route("/api/cloud/auth/url", get(login_url))
         .route("/api/cloud/auth/paste", post(login_paste))
         .route("/api/admin/overview", get(overview))
+        .route(
+            "/api/admin/printers/{serial}/endpoint",
+            axum::routing::put(put_endpoint),
+        )
         .route("/api/admin/settings", get(get_settings).put(put_settings))
         .route("/api/admin/ca", get(export_ca))
         .route(

@@ -1,6 +1,6 @@
 [package]
 name = "bambu-cloud-lan-proxy"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 description = "A standalone local Bambu-shaped LAN facade backed by Bambu cloud sessions"

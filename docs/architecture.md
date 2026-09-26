@@ -3,7 +3,7 @@
 ```text
 Bambu Handy ───────────────┐
                            v
-H2C <──────> Bambu Cloud <────> Rust session service + native plugin shim
+Printer(s) <─> Bambu Cloud <────> Rust session service + native plugin shim
                                 |            ^  |
                          media tunnel        |  | raw report / checked request
                                 v            |  v
@@ -11,7 +11,7 @@ H2C <──────> Bambu Cloud <────> Rust session service + nativ
                               ^                         ^
                               └──────── Bambuddy ───────┘
 
-H2C RTSPS :322 ──> MediaMTX (on-demand, cert-pinned) ──> TCP ingress :322
+Printer RTSPS :322 ──> MediaMTX (on-demand, cert-pinned) ──> endpoint :322
                                                                ^
                                                                └── Bambuddy
 ```
@@ -69,10 +69,11 @@ One lock per physical serial plus request-digest replay tracking prevents
 parallel or QoS-replayed jobs from becoming duplicate starts. The printer state
 is checked again immediately before the plugin call.
 
-The downstream TLS listener speaks the same username, topics, TLS, and port
-that Bambuddy expects from a LAN printer. It is an application-layer facade;
-it does not change the H2C's network mode or expose the physical printer's LAN
-ports.
+The endpoint manager watches the private printer registry and maintains one
+serial-pinned listener bundle per configured virtual IP. Every bundle exposes
+the normal Bambu ports while sharing one cloud session and internal MQTT
+broker. Per-printer staging directories and injected serials prevent file and
+command routing from crossing endpoint boundaries.
 
 The camera is the exception because H-series LAN-only liveview remains a direct
 local RTSPS service while cloud pairing is active. An unprivileged MediaMTX

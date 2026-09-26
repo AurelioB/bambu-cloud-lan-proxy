@@ -8,12 +8,16 @@ services:
     environment:
       PROXY_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
       PROXY_BIND_IP: ${PROXY_BIND_IP:-127.0.0.2}
+      PROXY_RUNTIME_UID: ${PUID:-1000}
+      PROXY_RUNTIME_GID: ${PGID:-1000}
+      PROXY_PRINTER_REGISTRY: /registry/printers.json
     volumes:
       - ./data/proxy:/data
       - ./data/staging:/staging
       - ./data/remote-cache:/remote-cache
       - ./data/camera:/camera-state
       - ./data/local-status:/local-status
+      - ./data/gateway:/registry:ro
     restart: "no"
 
   mqtt:
@@ -24,7 +28,8 @@ services:
       bootstrap:
         condition: service_completed_successfully
     ports:
-      - "${PROXY_BIND_IP:-127.0.0.2}:8883:8883"
+      - "127.0.0.1:1883:1883"
+      - "127.0.0.1:18883:8883"
     user: "1883:1883"
     volumes:
       - ./data/proxy/runtime:/mosquitto/secrets:ro
@@ -46,6 +51,7 @@ services:
       start_period: 10s
 
   ftps:
+    profiles: ["legacy-single-endpoint"]
     image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     build:
       context: .
@@ -92,6 +98,7 @@ services:
       start_period: 10s
 
   camera:
+    profiles: ["legacy-single-endpoint"]
     image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     build:
       context: .
@@ -140,6 +147,7 @@ services:
       start_period: 30s
 
   native-files:
+    profiles: ["legacy-single-endpoint"]
     image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       gateway:
@@ -184,6 +192,7 @@ services:
       start_period: 15s
 
   discovery:
+    profiles: ["legacy-single-endpoint"]
     image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       native-files:
@@ -192,7 +201,7 @@ services:
     environment:
       DISCOVERY_PRINTER_IP: ${PROXY_BIND_IP:-127.0.0.2}
       DISCOVERY_PRINTER_SERIAL: ${PROXY_STORAGE_PRINTER_SERIAL:-}
-      DISCOVERY_PRINTER_MODEL: ${PROXY_DISCOVERY_MODEL:-H2C}
+      DISCOVERY_PRINTER_MODEL: ${PROXY_DISCOVERY_MODEL:-Bambu Lab Printer}
       DISCOVERY_PRINTER_NAME: ${PROXY_DISCOVERY_NAME:-Bambu Cloud LAN Proxy}
       DISCOVERY_TARGET: ${PROXY_DISCOVERY_TARGET:-127.0.0.1}
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
@@ -208,6 +217,7 @@ services:
       - no-new-privileges:true
 
   camera-ingress:
+    profiles: ["legacy-single-endpoint"]
     image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       camera:
@@ -242,6 +252,7 @@ services:
       start_period: 10s
 
   local-status:
+    profiles: ["legacy-single-endpoint"]
     image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
     depends_on:
       mqtt:
@@ -275,8 +286,6 @@ services:
         PROXY_VERSION: ${PROXY_VERSION:-dev}
     depends_on:
       mqtt:
-        condition: service_healthy
-      ftps:
         condition: service_healthy
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:
@@ -330,3 +339,79 @@ services:
       timeout: 5s
       retries: 5
       start_period: 90s
+
+  endpoint-manager:
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+      args:
+        PROXY_VERSION: ${PROXY_VERSION:-dev}
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+      endpoint-addresses:
+        condition: service_completed_successfully
+    network_mode: host
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      PROXY_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
+      ENDPOINT_REGISTRY: /data/printers.json
+      ENDPOINT_BROKER_HOST: 127.0.0.1
+      ENDPOINT_BROKER_PORT: "1883"
+      ENDPOINT_TLS_BROKER_PORT: "18883"
+      ENDPOINT_STORAGE_API_URL: http://127.0.0.1:${GATEWAY_PORT:-4844}/internal/cloud-lan-proxy/storage
+      ENDPOINT_STAGING_ROOT: /staging
+      ENDPOINT_REMOTE_CACHE_DIR: /remote-cache
+      ENDPOINT_CAMERA_STATE_DIR: /camera-state
+      ENDPOINT_LOCAL_STATUS_DIR: /local-status
+      ENDPOINT_LOCAL_STATUS: ${PROXY_LOCAL_STATUS_ENABLED:-true}
+      DISCOVERY_TARGET: ${PROXY_DISCOVERY_TARGET:-255.255.255.255}
+      FTPS_MAX_UPLOAD_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
+      FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
+      LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    command: ["endpoint-manager"]
+    volumes:
+      - ./data/gateway:/data:ro
+      - ./data/proxy/runtime/certs:/secrets/certs:ro
+      - ./data/staging:/staging
+      - ./data/remote-cache:/remote-cache
+      - ./data/camera:/camera-state
+      - ./data/local-status:/local-status
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+  endpoint-addresses:
+    image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+      args:
+        PROXY_VERSION: ${PROXY_VERSION:-dev}
+    network_mode: host
+    environment:
+      ENDPOINT_REGISTRY: /data/printers.json
+      ENDPOINT_INTERFACE: ${PROXY_ENDPOINT_INTERFACE:-}
+      LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    command: ["endpoint-addresses"]
+    volumes:
+      - ./data/gateway:/data:ro
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true

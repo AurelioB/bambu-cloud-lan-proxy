@@ -371,8 +371,14 @@ impl CloudLanFacade {
         let config = self.inner.config.read().await.clone();
         let mut snapshot: Option<PathBuf> = None;
         let result = async {
+            let per_printer = config.staging_dir.join(&serial);
+            let staging = if per_printer.is_dir() {
+                &per_printer
+            } else {
+                &config.staging_dir
+            };
             let source = wait_for_staged(
-                &config.staging_dir,
+                staging,
                 &request.relative_path,
                 config.cloud_print_wait,
                 config.cloud_print_max_bytes,

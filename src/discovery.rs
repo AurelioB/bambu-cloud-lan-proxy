@@ -42,7 +42,7 @@ pub async fn run() -> Result<()> {
     let payload = notify(
         &ip,
         &serial,
-        &env::var("DISCOVERY_PRINTER_MODEL").unwrap_or_else(|_| "H2C".into()),
+        &env::var("DISCOVERY_PRINTER_MODEL").unwrap_or_else(|_| "Bambu Lab Printer".into()),
         &env::var("DISCOVERY_PRINTER_NAME").unwrap_or_else(|_| "Bambu Cloud LAN Proxy".into()),
         &env::var("DISCOVERY_PRINTER_VERSION").unwrap_or_else(|_| "00.00.00.00".into()),
     );

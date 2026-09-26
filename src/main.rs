@@ -5,6 +5,7 @@ mod cloud_printer;
 mod commands;
 mod config;
 mod discovery;
+mod endpoint;
 mod ftps;
 mod local_status;
 mod native_files;
@@ -33,6 +34,10 @@ enum Command {
     Camera,
     Service,
     Discovery,
+    Endpoint,
+    EndpointAddresses,
+    EndpointManager,
+    EndpointOptional,
     Ftps,
     LocalStatus,
     NativeFiles,
@@ -56,6 +61,10 @@ async fn main() -> Result<()> {
         Command::Camera => camera::run().await,
         Command::Service => service::run().await,
         Command::Discovery => discovery::run().await,
+        Command::Endpoint => endpoint::run_endpoint().await,
+        Command::EndpointAddresses => endpoint::configure_addresses().await,
+        Command::EndpointManager => endpoint::run_manager().await,
+        Command::EndpointOptional => endpoint::run_optional().await,
         Command::Ftps => ftps::run().await,
         Command::LocalStatus => local_status::run().await,
         Command::NativeFiles => native_files::run().await,
