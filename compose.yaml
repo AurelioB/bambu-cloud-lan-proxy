@@ -12,6 +12,7 @@ services:
       PROXY_RUNTIME_GID: ${PGID:-1000}
       PROXY_PRINTER_REGISTRY: /registry/printers.json
       PROXY_ENDPOINT_STATE_DIR: /endpoint-state
+      PROXY_ADDRESS_STATE_DIR: /address-state
     volumes:
       - ./data/proxy:/data
       - ./data/staging:/staging
@@ -19,6 +20,7 @@ services:
       - ./data/camera:/camera-state
       - ./data/local-status:/local-status
       - ./data/endpoint-state:/endpoint-state
+      - ./data/address-state:/address-state
       - ./data/gateway:/registry:ro
     restart: "no"
 
@@ -361,7 +363,7 @@ services:
       endpoint-addresses:
         condition: service_healthy
     network_mode: host
-    user: "${PUID:-1000}:${PGID:-1000}"
+    user: "0:0"
     environment:
       PROXY_ACCESS_CODE: ${PROXY_ACCESS_CODE:?Run ./scripts/init.sh first}
       ENDPOINT_REGISTRY: /data/printers.json
@@ -379,6 +381,15 @@ services:
       FTPS_MAX_UPLOAD_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
       FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    entrypoint:
+      - setpriv
+      - --reuid=${PUID:-1000}
+      - --regid=${PGID:-1000}
+      - --clear-groups
+      - --inh-caps=+net_bind_service
+      - --ambient-caps=+net_bind_service
+      - --bounding-set=-setpcap,-setuid,-setgid
+      - bambu-cloud-lan-proxy
     command: ["endpoint-manager"]
     volumes:
       - ./data/gateway:/data:ro
@@ -397,10 +408,13 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+      - SETPCAP
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "bambu-cloud-lan-proxy", "endpoint-health"]
+      test: ["CMD", "setpriv", "--reuid=${PUID:-1000}", "--regid=${PGID:-1000}", "--clear-groups", "bambu-cloud-lan-proxy", "endpoint-health"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -413,12 +427,25 @@ services:
       dockerfile: Dockerfile.proxy
       args:
         PROXY_VERSION: ${PROXY_VERSION:-dev}
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
     network_mode: host
+    user: "0:0"
     environment:
       ENDPOINT_REGISTRY: /data/printers.json
       ENDPOINT_INTERFACE: ${PROXY_ENDPOINT_INTERFACE:-}
       ENDPOINT_ADDRESS_STATE: /address-state/managed.json
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
+    entrypoint:
+      - setpriv
+      - --reuid=${PUID:-1000}
+      - --regid=${PGID:-1000}
+      - --clear-groups
+      - --inh-caps=+net_admin
+      - --ambient-caps=+net_admin
+      - --bounding-set=-setpcap,-setuid,-setgid
+      - bambu-cloud-lan-proxy
     command: ["endpoint-address-manager"]
     volumes:
       - ./data/gateway:/data:ro
@@ -428,10 +455,13 @@ services:
       - ALL
     cap_add:
       - NET_ADMIN
+      - SETPCAP
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "bambu-cloud-lan-proxy", "endpoint-addresses-check"]
+      test: ["CMD", "setpriv", "--reuid=${PUID:-1000}", "--regid=${PGID:-1000}", "--clear-groups", "bambu-cloud-lan-proxy", "endpoint-addresses-check"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -38,6 +38,7 @@ camera_state_dir=${PROXY_CAMERA_STATE_DIR:-/camera-state}
 remote_cache_dir=${PROXY_REMOTE_CACHE_DIR:-/remote-cache}
 local_status_dir=${PROXY_LOCAL_STATUS_DIR:-/local-status}
 endpoint_state_dir=${PROXY_ENDPOINT_STATE_DIR:-/endpoint-state}
+address_state_dir=${PROXY_ADDRESS_STATE_DIR:-/address-state}
 mkdir -p \
   "$cert_dir" \
   "$auth_dir" \
@@ -46,7 +47,8 @@ mkdir -p \
   "$runtime_auth_dir" \
   "$camera_state_dir" \
   "$remote_cache_dir" \
-  "$endpoint_state_dir"
+  "$endpoint_state_dir" \
+  "$address_state_dir"
 mkdir -p "$local_status_dir"
 
 staging_dir=${PROXY_STAGING_DIR:-/staging}
@@ -123,10 +125,12 @@ chmod 700 "$cert_dir" "$auth_dir"
 chown -R "$runtime_uid":1883 "$runtime_dir"
 chown -R "$runtime_uid":"$runtime_gid" "$camera_state_dir"
 chown -R "$runtime_uid":"$runtime_gid" "$endpoint_state_dir"
+chown -R "$runtime_uid":"$runtime_gid" "$address_state_dir"
 chmod 1777 "$local_status_dir"
 chmod 750 "$runtime_dir" "$runtime_cert_dir" "$runtime_auth_dir"
 chmod 700 "$camera_state_dir"
 chmod 750 "$endpoint_state_dir"
+chmod 750 "$address_state_dir"
 chmod 1777 "$remote_cache_dir"
 find "$remote_cache_dir" -type f -mtime +1 -delete
 chmod 755 "$export_dir"
