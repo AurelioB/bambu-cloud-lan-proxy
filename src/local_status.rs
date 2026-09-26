@@ -32,6 +32,7 @@ pub async fn run() -> Result<()> {
         env_value("LOCAL_STATUS_BROKER_PORT", "1883").parse::<u16>()?,
     );
     downstream_options.set_keep_alive(Duration::from_secs(30));
+    downstream_options.set_max_packet_size(2 * 1024 * 1024, 2 * 1024 * 1024);
     let (downstream, mut downstream_loop) = AsyncClient::new(downstream_options, 100);
     let mut upstream_options = MqttOptions::new(
         format!("bambu-local-status-in-{}", source.serial),
@@ -40,6 +41,7 @@ pub async fn run() -> Result<()> {
     );
     upstream_options
         .set_keep_alive(Duration::from_secs(30))
+        .set_max_packet_size(2 * 1024 * 1024, 2 * 1024 * 1024)
         .set_credentials("bblp", source.access_code);
     upstream_options.set_transport(Transport::tls_with_config(TlsConfiguration::Rustls(
         Arc::new(crate::tls::pinned_client_config(&fingerprint)?),

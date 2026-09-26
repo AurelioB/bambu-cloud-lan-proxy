@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include <functional>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -30,6 +31,7 @@ class PluginLoader {
   }
 
   void initialize();
+  std::optional<std::string> get_local_media_url(const std::string& serial);
   std::string get_camera_url(const std::string& serial);
 };
 }

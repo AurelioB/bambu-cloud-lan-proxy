@@ -16,6 +16,11 @@ Printer RTSPS :322 ──> MediaMTX (on-demand, cert-pinned) ──> endpoint :3
                                                                └── Bambuddy
 ```
 
+Cloud controls are dispatched as a single native burst: a read-only `pushall`
+opens the plugin's short publish window and the signed control follows within
+the same native call. A successful burst persists only a local readiness
+marker; explicit certificate expiry or revocation signals remove it.
+
 A separate read-only client also attempts the printer's local MQTT/TLS port.
 It pins that endpoint's certificate and republishes only report messages. A
 fresh heartbeat makes the cloud bridge suppress duplicate cloud reports; if
@@ -40,14 +45,19 @@ ZIP-checked when they end in `.3mf`, flushed, then atomically renamed. Listings
 never expose partial/internal files. Both control and `PROT P` data channels
 use the locally generated server certificate.
 
-For printer-resident files, our native adapter asks the same official networking plugin
-used by Studio to mint a short-lived authenticated `bambu:///tutk` URL. The
-native host passes that URL directly to the official `libBambuSource` control
-stream; the URL is never logged, persisted, or returned to FTPS. `LIST_INFO`
+For printer-resident files, the native adapter first builds the same local
+`bambu:///local` URL used by Studio when a validated physical IPv4 address and
+access code are present in the private registry. If that connection fails, it
+asks the same official networking plugin used by Studio to mint a short-lived
+authenticated `bambu:///tutk` URL. Neither URL is logged, persisted, or returned
+to FTPS. `LIST_INFO`
 responses are projected into `cache/`, `timelapse/`, and `video/`. A `RETR`
 causes an on-demand `FILE_DOWNLOAD` into `data/remote-cache/`, validates size
 and MD5, streams it over the TLS port-6000 protocol, then asks the proxy to remove it. The
 same bridge supports ability, sub-file, upload, delete, and cancel operations.
+Delete compatibility tries Studio's path form and its legacy name form; a
+legacy success acknowledgement is verified against a fresh list and fails
+closed if the entry remains.
 Remote writes are separately gated. A native TLS port-6000 facade translates
 BambuTunnelLocal framing and emits a list-change notice after mutations.
 

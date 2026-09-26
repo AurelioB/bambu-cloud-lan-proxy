@@ -213,7 +213,15 @@ impl CloudLanFacade {
         } else {
             request.envelope.clone()
         };
-        if printer.send(outgoing, 1).await? != 0 {
+        let result = if matches!(
+            decision.action,
+            Action::ForwardControl | Action::ForwardSigned
+        ) {
+            printer.send_control(outgoing, 1).await?
+        } else {
+            printer.send(outgoing, 1).await?
+        };
+        if result != 0 {
             self.publish_rejection(
                 &serial,
                 &Decision {

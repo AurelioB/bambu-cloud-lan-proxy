@@ -162,12 +162,31 @@ pub async fn run() -> Result<()> {
     let path = PathBuf::from(env_value("CAMERA_CONFIG_PATH", "/tmp/mediamtx.json"));
     fs::write(&path, serde_json::to_vec(&config)?)?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    let status = tokio::process::Command::new("/usr/local/bin/mediamtx")
+    let mut process = tokio::process::Command::new("/usr/local/bin/mediamtx")
         .arg(&path)
-        .status()
-        .await?;
-    if !status.success() {
-        bail!("MediaMTX exited with {status}")
+        .kill_on_drop(true)
+        .spawn()?;
+    #[cfg(unix)]
+    let status = {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            status = process.wait() => Some(status?),
+            signal = tokio::signal::ctrl_c() => { signal?; None },
+            _ = terminate.recv() => None,
+        }
+    };
+    #[cfg(not(unix))]
+    let status = tokio::select! {
+        status = process.wait() => Some(status?),
+        signal = tokio::signal::ctrl_c() => { signal?; None },
+    };
+    if let Some(status) = status {
+        if !status.success() {
+            bail!("MediaMTX exited with {status}")
+        }
+    } else {
+        process.kill().await?;
     }
     Ok(())
 }

@@ -453,3 +453,107 @@ pub async fn run() -> Result<()> {
         });
     }
 }
+
+async fn probe_send(
+    stream: &mut tokio_rustls::client::TlsStream<TcpStream>,
+    magic: u32,
+    sequence: u32,
+    payload: &[u8],
+) -> Result<()> {
+    let mut header = Vec::with_capacity(16);
+    header.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    header.extend_from_slice(&magic.to_le_bytes());
+    header.extend_from_slice(&sequence.to_le_bytes());
+    header.extend_from_slice(&0u32.to_le_bytes());
+    stream.write_all(&header).await?;
+    stream.write_all(payload).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+async fn probe_receive(
+    stream: &mut tokio_rustls::client::TlsStream<TcpStream>,
+) -> Result<(u32, Value)> {
+    let mut header = [0u8; 16];
+    stream.read_exact(&mut header).await?;
+    let size = u32::from_le_bytes(header[0..4].try_into().unwrap()) as usize;
+    let magic = u32::from_le_bytes(header[4..8].try_into().unwrap());
+    if size > MAX_FRAME || header[12..16] != [0; 4] {
+        bail!("invalid native probe response")
+    }
+    let mut payload = vec![0; size];
+    stream.read_exact(&mut payload).await?;
+    Ok((magic, serde_json::from_slice(&payload)?))
+}
+
+pub async fn probe() -> Result<()> {
+    use rustls::pki_types::ServerName;
+    use std::net::IpAddr;
+
+    let host = env_value("NATIVE_PROBE_HOST", "127.0.0.2");
+    let port = env_value("NATIVE_PROBE_PORT", "6000").parse::<u16>()?;
+    let access = env_value("PROXY_ACCESS_CODE", "");
+    if access.len() != 8 {
+        bail!("PROXY_ACCESS_CODE must be eight characters")
+    }
+    let socket =
+        tokio::time::timeout(Duration::from_secs(5), TcpStream::connect((&*host, port))).await??;
+    let name = host
+        .parse::<IpAddr>()
+        .map(|value| ServerName::IpAddress(value.into()))
+        .or_else(|_| ServerName::try_from(host.clone()))?;
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(5),
+        crate::tls::insecure_connector().connect(name, socket),
+    )
+    .await??;
+    let mut login = [0u8; 16];
+    login[..4].copy_from_slice(b"bblp");
+    login[8..].copy_from_slice(access.as_bytes());
+    probe_send(&mut stream, CLIENT_LOGIN, 1, &login).await?;
+    let mut login_header = [0u8; 16];
+    stream.read_exact(&mut login_header).await?;
+    let login_size = u32::from_le_bytes(login_header[0..4].try_into().unwrap()) as usize;
+    let login_magic = u32::from_le_bytes(login_header[4..8].try_into().unwrap());
+    let mut login_reply = vec![0; login_size];
+    stream.read_exact(&mut login_reply).await?;
+    if login_magic != SERVER_LOGIN || login_reply != [0; 4] {
+        bail!("native-file login failed")
+    }
+    probe_send(
+        &mut stream,
+        CLIENT_CTRL,
+        2,
+        &serde_json::to_vec(&json!({"mtype":0x3003,"sequence":1}))?,
+    )
+    .await?;
+    let (magic, setup) = probe_receive(&mut stream).await?;
+    if magic != SERVER_CTRL
+        || setup.get("mtype").and_then(Value::as_u64) != Some(0x3003)
+        || setup.get("result").and_then(Value::as_u64) != Some(0)
+    {
+        bail!("native-file setup failed")
+    }
+    probe_send(
+        &mut stream,
+        CLIENT_CTRL,
+        3,
+        &serde_json::to_vec(
+            &json!({"mtype":0x3001,"cmdtype":7,"sequence":2,"req":{"api_version":2}}),
+        )?,
+    )
+    .await?;
+    let (magic, ability) =
+        tokio::time::timeout(Duration::from_secs(65), probe_receive(&mut stream)).await??;
+    if magic != SERVER_CTRL
+        || ability.get("cmdtype").and_then(Value::as_u64) != Some(7)
+        || ability.get("result").and_then(Value::as_u64) != Some(0)
+        || !ability
+            .pointer("/reply/storage")
+            .is_some_and(Value::is_array)
+    {
+        bail!("native-file ability request failed")
+    }
+    println!("native-file login and ability request succeeded");
+    Ok(())
+}

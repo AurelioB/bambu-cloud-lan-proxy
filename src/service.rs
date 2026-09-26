@@ -69,6 +69,10 @@ impl Session {
                     active.join("state").display().to_string(),
                 ),
                 ("BAMBU_CLOUD_REGION", region.clone()),
+                (
+                    "BAMBU_PRINTER_REGISTRY",
+                    data.join("printers.json").display().to_string(),
+                ),
                 ("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt".into()),
                 ("SSL_CERT_DIR", "/etc/ssl/certs".into()),
                 (
@@ -353,6 +357,7 @@ impl Session {
                 Some("OnPrinterConnected") => {
                     async {
                         printer.set_connected(true);
+                        printer.restore_secure();
                         checked(&self.host, "install_device_cert", json!({"dev_id":serial}))
                             .await?;
                         self.snapshot(&printer).await

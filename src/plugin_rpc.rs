@@ -37,7 +37,7 @@ impl PluginRpc {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         for (name, value) in environment {
             command.env(name, value);
         }
@@ -50,6 +50,10 @@ impl PluginRpc {
             .stdout
             .take()
             .context("native adapter stdout unavailable")?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("native adapter stderr unavailable")?;
         let (events, _) = broadcast::channel(2048);
         let rpc = Self {
             inner: Arc::new(Inner {
@@ -63,6 +67,17 @@ impl PluginRpc {
         };
         let receiver = rpc.clone();
         tokio::spawn(async move { receiver.receive(BufReader::new(stdout)).await });
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                // The proprietary plugin also writes to this stream. Only
+                // surface diagnostics produced by our adapter so vendor logs
+                // cannot accidentally disclose session material.
+                if line.starts_with("native operation ") {
+                    tracing::warn!("{line}");
+                }
+            }
+        });
         Ok(rpc)
     }
 

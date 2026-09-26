@@ -41,9 +41,16 @@ pub fn translate_control(
             if !matches!(mode, "on" | "off") {
                 bail!("invalid chamber light mode")
             }
-            Ok(
-                json!({"system":{"command":"ledctrl","led_node":"chamber_light","led_mode":mode,"sequence_id":sequence()}}),
-            )
+            Ok(json!({"system":{
+                "command":"ledctrl",
+                "led_node":"chamber_light",
+                "led_mode":mode,
+                "led_on_time":500,
+                "led_off_time":500,
+                "loop_times":0,
+                "interval_time":0,
+                "sequence_id":sequence()
+            }}))
         }
         _ => bail!("unsupported allowlisted control"),
     }

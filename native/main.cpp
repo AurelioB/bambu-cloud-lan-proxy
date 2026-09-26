@@ -3,9 +3,13 @@
 #include "plugin_loader.hpp"
 #include "print_abi.hpp"
 #include "storage_bridge.hpp"
+#include <arpa/inet.h>
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <mutex>
@@ -77,6 +81,33 @@ std::string PluginLoader::get_camera_url(const std::string& serial) {
   return value;
 }
 
+std::optional<std::string> PluginLoader::get_local_media_url(
+    const std::string& serial) {
+  const char* registry_path = std::getenv("BAMBU_PRINTER_REGISTRY");
+  if (!registry_path || !*registry_path) return std::nullopt;
+  try {
+    std::ifstream input(registry_path);
+    json registry;
+    input >> registry;
+    if (!registry.is_array()) return std::nullopt;
+    for (const auto& printer : registry) {
+      if (printer.value("serial", "") != serial) continue;
+      auto ip = printer.value("ip", "");
+      auto code = printer.value("access_code", "");
+      in_addr address{};
+      if (inet_pton(AF_INET, ip.c_str(), &address) != 1 || code.size() != 8 ||
+          !std::all_of(code.begin(), code.end(), [](unsigned char value) {
+            return std::isalnum(value);
+          })) return std::nullopt;
+      return "bambu:///local/" + ip +
+             ".?port=6000&user=bblp&passwd=" + code + "&device=" + serial +
+             "&cli_id=cloud-lan-proxy&cli_ver=0.6.0";
+    }
+  } catch (...) {
+  }
+  return std::nullopt;
+}
+
 static json dispatch(PluginLoader& plugin, const std::string& method, const json& p) {
   if (method == "echo") return p;
   if (method == "init_plugin") { plugin.initialize(); return {{"bootstrap_rc", 0}}; }
@@ -100,6 +131,16 @@ static json dispatch(PluginLoader& plugin, const std::string& method, const json
   if (method == "send_message")
     return {{"rc", plugin.invoke<int>(method, p.at("dev_id").get<std::string>(),
       p.at("payload").get<std::string>(), p.value("qos", 0), 0)}};
+  if (method == "send_burst") {
+    const auto dev_id = p.at("dev_id").get<std::string>();
+    const auto payloads = p.at("payloads").get<std::vector<std::string>>();
+    const int qos = p.value("qos", 0);
+    json results = json::array();
+    for (const auto& payload : payloads) {
+      results.push_back(plugin.invoke<int>("send_message", dev_id, payload, qos, 0));
+    }
+    return {{"rcs", std::move(results)}};
+  }
   if (method == "install_device_cert") {
     plugin.invoke<void>(method, p.at("dev_id").get<std::string>(), false);
     return {{"dispatched", true}};
@@ -178,7 +219,18 @@ int main() {
     auto handle = [plugin, request, method] {
       try { output({{"id", request["id"]},
                     {"result", dispatch(*plugin, method, request.at("params"))}}); }
-      catch (...) { output({{"id", request["id"]}, {"error", "native operation failed"}}); }
+      catch (const std::exception& error) {
+        // Keep request parameters (which may contain credentials or paths) out
+        // of logs, but retain the native failure reason for operators.
+        std::cerr << "native operation " << method << " failed: "
+                  << error.what() << std::endl;
+        output({{"id", request["id"]}, {"error", "native operation failed"}});
+      }
+      catch (...) {
+        std::cerr << "native operation " << method
+                  << " failed with an unknown exception" << std::endl;
+        output({{"id", request["id"]}, {"error", "native operation failed"}});
+      }
     };
     if (method.rfind("storage.", 0) == 0) {
       if (storage_busy.exchange(true)) {

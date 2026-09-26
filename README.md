@@ -9,13 +9,13 @@ The application is Rust with an embedded Svelte 5/shadcn-svelte admin console. I
 - One private virtual IP per printer, all backed by one shared cloud login.
 - MQTT over TLS on `8883`, with serial-isolated cloud reports and policy-controlled signed commands.
 - Implicit FTPS on `990` plus passive ports `50000-50009` for staged jobs.
-- Bambu's TLS native-file protocol on `6000` for previous jobs, timelapses, downloads, optional uploads, and optional deletion.
+- Bambu's TLS native-file protocol on `6000` for previous jobs, timelapses, downloads, optional uploads, and optional deletion. Printer-resident file operations prefer the configured local printer connection and fall back to the official cloud media tunnel.
 - RTSPS camera access on `322`, backed by the printer's local liveview and protected with certificate pinning.
 - SSDP discovery for LAN clients.
 - An authenticated admin console on `127.0.0.1:4844` by default.
 - Optional local, read-only MQTT telemetry with automatic cloud-report fallback.
 
-Writes use Bambu Cloud and the official plugin's device certificate. Read-only status normally comes from the cloud; if the printer's LAN MQTT endpoint is configured, fresh local reports take precedence. Camera traffic always uses the local printer because Bambu's cloud path does not provide the LAN RTSPS stream.
+Control and print writes use Bambu Cloud and the official plugin's device certificate. Read-only status normally comes from the cloud; if the printer's LAN MQTT endpoint is configured, fresh local reports take precedence. File browsing uses the local native-file service when local credentials are configured, with cloud fallback. Camera traffic always uses the local printer because Bambu's cloud path does not provide the LAN RTSPS stream.
 
 ## Requirements
 
@@ -125,7 +125,7 @@ To update, pull the reviewed source and rebuild. Plugin updates intentionally fa
 
 ## Architecture and limits
 
-See [docs/architecture.md](docs/architecture.md), [docs/gateway-independence.md](docs/gateway-independence.md), and [docs/rust-migration-plan.md](docs/rust-migration-plan.md).
+See [docs/architecture.md](docs/architecture.md), [docs/gateway-independence.md](docs/gateway-independence.md), [docs/rust-migration-plan.md](docs/rust-migration-plan.md), and the [v0.6.0 validation record](docs/release-validation-v0.6.0.md).
 
 This is an independent community project, not affiliated with Bambu Lab, Bambu Gateway, or Bambuddy. Cloud behavior is subject to Bambu's service and account policies. Prefer official local interfaces whenever Bambu makes them available.
 

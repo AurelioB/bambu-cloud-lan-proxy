@@ -37,6 +37,14 @@ impl PrinterCapabilities {
         ]
         .into_iter()
         .find(|profile| normalized.ends_with(profile));
+        // The account/discovery APIs may return Bambu's internal model code
+        // rather than the marketing name. O1C2 is emitted by current H2C
+        // firmware and has the same local RTSPS/dual-nozzle capability set.
+        let profile = if normalized == "O1C2" {
+            Some("H2C")
+        } else {
+            profile
+        };
         let image_camera = matches!(profile, Some("A1" | "A1MINI" | "A2L" | "P1P"));
         let rtsps_camera = matches!(
             profile,
@@ -106,6 +114,11 @@ mod tests {
         assert!(dual.local_camera_bridge);
         assert!(dual.chamber_temperature);
         assert!(dual.dual_nozzle);
+
+        let internal = PrinterCapabilities::from_model("O1C2");
+        assert_eq!(internal.camera, CameraKind::Rtsps);
+        assert!(internal.local_camera_bridge);
+        assert!(internal.dual_nozzle);
     }
 
     #[test]

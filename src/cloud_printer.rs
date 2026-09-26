@@ -35,6 +35,7 @@ struct Inner {
     secure: AtomicBool,
     uncertain: AtomicBool,
     marker: PathBuf,
+    secure_marker: PathBuf,
     progress: Mutex<Option<mpsc::Sender<Value>>>,
 }
 
@@ -42,15 +43,18 @@ impl CloudPrinter {
     pub fn new(serial: String, host: PluginRpc, safety_dir: PathBuf) -> Self {
         let marker = safety_dir.join(format!("{serial}.pending"));
         let uncertain = marker.exists();
+        let secure_marker = safety_dir.join(format!("{serial}.secure"));
+        let secure = secure_marker.exists();
         Self {
             inner: Arc::new(Inner {
                 serial,
                 host,
                 state: RwLock::new(("unknown".into(), None)),
                 connected: AtomicBool::new(false),
-                secure: AtomicBool::new(false),
+                secure: AtomicBool::new(secure),
                 uncertain: AtomicBool::new(uncertain),
                 marker,
+                secure_marker,
                 progress: Mutex::new(None),
             }),
         }
@@ -64,14 +68,35 @@ impl CloudPrinter {
     pub fn set_secure(&self, secure: bool) {
         self.inner.secure.store(secure, Ordering::Release);
     }
+    pub fn restore_secure(&self) {
+        self.set_secure(self.inner.secure_marker.exists());
+    }
+    fn confirm_secure(&self) {
+        self.set_secure(true);
+        if let Some(parent) = self.inner.secure_marker.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(
+            &self.inner.secure_marker,
+            b"Secure cloud control previously confirmed.\n",
+        );
+    }
+    fn invalidate_secure(&self) {
+        self.set_secure(false);
+        let _ = fs::remove_file(&self.inner.secure_marker);
+    }
     pub async fn receive(&self, payload: &Value) -> bool {
         if let Some(signal) = payload.as_str() {
             match signal {
                 "device_cert_installed" => {
-                    self.set_secure(true);
+                    self.confirm_secure();
                     return false;
                 }
-                "device_cert_uninstalled" | "cert_expired" | "cert_revoked" | "wait_info" => {
+                "device_cert_uninstalled" | "cert_expired" | "cert_revoked" => {
+                    self.invalidate_secure();
+                    return false;
+                }
+                "wait_info" => {
                     self.set_secure(false);
                     return false;
                 }
@@ -129,6 +154,41 @@ impl CloudPrinter {
             )
             .await?;
         Ok(result.get("rc").and_then(Value::as_i64).unwrap_or(-1))
+    }
+    pub async fn send_control(&self, envelope: Value, qos: u8) -> Result<i64> {
+        // Bambu's cloud publish channel is only writable for a few milliseconds
+        // after a query. Keep both native calls in one RPC dispatch so an async
+        // round trip cannot miss that window.
+        let wake = json!({"pushing":{"command":"pushall","sequence_id":"0"}});
+        let result = self
+            .inner
+            .host
+            .call(
+                "send_burst",
+                json!({
+                    "dev_id": self.serial(),
+                    "payloads": [wake.to_string(), envelope.to_string()],
+                    "qos": qos
+                }),
+                Duration::from_secs(60),
+            )
+            .await?;
+        let results = result
+            .get("rcs")
+            .and_then(Value::as_array)
+            .context("plugin omitted burst results")?;
+        if results.len() != 2 {
+            bail!("plugin returned an incomplete burst result")
+        }
+        let rc = results
+            .iter()
+            .map(|value| value.as_i64().unwrap_or(-1))
+            .find(|value| *value != 0)
+            .unwrap_or(0);
+        if rc == 0 {
+            self.confirm_secure();
+        }
+        Ok(rc)
     }
     pub async fn deliver_progress(&self, event: Value) {
         if let Some(sender) = self.inner.progress.lock().await.as_ref() {

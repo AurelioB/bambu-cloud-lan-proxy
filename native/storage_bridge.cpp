@@ -79,6 +79,24 @@ SourceApi& api() { static SourceApi value; return value; }
 class Session {
  public:
   explicit Session(const std::string& url) : api_(api()) {
+    if (!connect(url))
+      throw std::runtime_error("BambuSource connection failed rc=" +
+                               std::to_string(last_error_));
+  }
+  Session(PluginLoader& loader, const std::string& dev_id) : api_(api()) {
+    if (auto local = loader.get_local_media_url(dev_id); local && connect(*local))
+      return;
+    cleanup();
+    if (!connect(loader.get_camera_url(dev_id)))
+      throw std::runtime_error("BambuSource connection failed rc=" +
+                               std::to_string(last_error_));
+  }
+  ~Session() { cleanup(); }
+  Session(const Session&) = delete;
+  Session& operator=(const Session&) = delete;
+
+ private:
+  bool connect(const std::string& url) {
     int rc = api_.create(&tunnel_, url.c_str());
     if (rc == 0) rc = api_.open(tunnel_);
     if (rc == 0) {
@@ -89,13 +107,15 @@ class Session {
       } while (rc == 2 && std::chrono::steady_clock::now() < deadline);
     }
     if (rc != 0) {
+      last_error_ = rc;
       cleanup();
-      throw std::runtime_error("BambuSource connection failed rc=" + std::to_string(rc));
+      return false;
     }
+    last_error_ = 0;
+    return true;
   }
-  ~Session() { cleanup(); }
-  Session(const Session&) = delete;
-  Session& operator=(const Session&) = delete;
+
+ public:
 
   void request(int command, const json& request,
                const unsigned char* data = nullptr, std::size_t data_size = 0) {
@@ -145,6 +165,7 @@ class Session {
   }
   SourceApi& api_;
   Tunnel tunnel_ = nullptr;
+  int last_error_ = 0;
 };
 
 const json& reply_of(const json& root) {
@@ -217,7 +238,7 @@ json StorageBridge::list(PluginLoader& loader, const std::string& dev_id,
   if (type != "timelapse" && type != "video" && type != "model")
     throw std::runtime_error("invalid storage type");
   validate_storage(storage);
-  Session session(loader.get_camera_url(dev_id));
+  Session session(loader, dev_id);
   json request{{"type", type}, {"api_version", 2}, {"notify", "DETAIL"}};
   if (!storage.empty()) request["storage"] = storage;
   session.request(1, request);
@@ -253,7 +274,7 @@ json StorageBridge::download(PluginLoader& loader, const std::string& dev_id,
   std::ofstream output(partial, std::ios::binary | std::ios::trunc);
   if (!output) throw std::runtime_error("cannot create download target");
   try {
-    Session session(loader.get_camera_url(dev_id));
+    Session session(loader, dev_id);
     json request;
     if (!remote_path.empty()) request["path"] = remote_path;
     else request["file"] = remote_name;
@@ -305,7 +326,7 @@ json StorageBridge::ability(PluginLoader& loader, const std::string& dev_id,
   std::lock_guard<std::mutex> guard(mutex_);
   if (api_version < 1 || api_version > 10)
     throw std::runtime_error("invalid media API version");
-  Session session(loader.get_camera_url(dev_id));
+  Session session(loader, dev_id);
   session.request(7, {{"peer", "studio"}, {"api_version", api_version}});
   auto frame = session.response(std::chrono::steady_clock::now() + std::chrono::seconds(30));
   int result = frame.first.value("result", -1);
@@ -336,7 +357,7 @@ json StorageBridge::subfile(PluginLoader& loader, const std::string& dev_id,
   std::ofstream output(partial, std::ios::binary | std::ios::trunc);
   if (!output) throw std::runtime_error("cannot create subfile target");
   try {
-    Session session(loader.get_camera_url(dev_id));
+    Session session(loader, dev_id);
     session.request(2, request);
     std::uint64_t written = 0;
     auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
@@ -370,10 +391,54 @@ json StorageBridge::remove(PluginLoader& loader, const std::string& dev_id,
   if (paths.empty() || paths.size() > 100)
     throw std::runtime_error("invalid delete request");
   for (const auto& path : paths) validate_remote(path);
-  Session session(loader.get_camera_url(dev_id));
+  Session session(loader, dev_id);
   session.request(3, {{"paths", paths}});
   auto frame = session.response(std::chrono::steady_clock::now() + std::chrono::seconds(60));
   int result = frame.first.value("result", -1);
+  if (result == 2) {
+    // Studio has used both the batched `paths` form and the legacy
+    // `delete`-by-name form. Some remote tunnels advertise absolute paths
+    // but only accept the latter after a list request established the
+    // current storage view on that tunnel.
+    for (const auto& path : paths) {
+      std::filesystem::path parsed(path);
+      auto name = parsed.filename().string();
+      auto lower = path;
+      std::transform(lower.begin(), lower.end(), lower.begin(),
+                     [](unsigned char value) { return std::tolower(value); });
+      std::string type = lower.find("timelapse") != std::string::npos
+                             ? "timelapse"
+                         : lower.find("video") != std::string::npos ? "video"
+                                                                    : "model";
+      std::string storage = lower.find("usb") != std::string::npos ? "udisk"
+                                                                    : "emmc";
+      if (name.empty())
+        throw std::runtime_error("invalid delete request");
+      session.request(1, {{"api_version", 2}, {"notify", "DETAIL"},
+                          {"type", type}, {"storage", storage}});
+      frame = session.response(std::chrono::steady_clock::now() +
+                               std::chrono::seconds(60));
+      result = frame.first.value("result", -1);
+      if (result != 0) break;
+      session.request(3, {{"delete", std::vector<std::string>{name}}});
+      frame = session.response(std::chrono::steady_clock::now() +
+                               std::chrono::seconds(60));
+      result = frame.first.value("result", -1);
+      if (result != 0) break;
+      session.request(1, {{"api_version", 2}, {"notify", "DETAIL"},
+                          {"type", type}, {"storage", storage}});
+      frame = session.response(std::chrono::steady_clock::now() +
+                               std::chrono::seconds(60));
+      result = frame.first.value("result", -1);
+      if (result != 0) break;
+      const auto& files = reply_of(frame.first).value("file_lists", json::array());
+      if (std::any_of(files.begin(), files.end(), [&](const json& file) {
+            return file.value("path", "") == path ||
+                   file.value("name", "") == name;
+          }))
+        throw std::runtime_error("printer acknowledged delete but file remains");
+    }
+  }
   if (result != 0) throw std::runtime_error("printer delete failed result=" + std::to_string(result));
   return {{"deleted", paths.size()}};
 }
@@ -394,7 +459,7 @@ json StorageBridge::upload(PluginLoader& loader, const std::string& dev_id,
   if (total == 0 || total > max_bytes)
     throw std::runtime_error("upload source is empty or exceeds limit");
   std::string md5 = md5_file(source);
-  Session session(loader.get_camera_url(dev_id));
+  Session session(loader, dev_id);
   session.request(5, {{"type", "model"}, {"storage", storage},
                       {"path", remote_path}, {"total", total}});
   auto init = session.response(std::chrono::steady_clock::now() + std::chrono::seconds(60));

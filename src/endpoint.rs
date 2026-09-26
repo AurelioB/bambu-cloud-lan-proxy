@@ -169,8 +169,8 @@ async fn termination_signal() -> Result<()> {
 async fn terminate(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
+        let _ = Command::new("sh")
+            .args(["-c", "kill -TERM \"$1\"", "sh", &pid.to_string()])
             .status()
             .await;
         if tokio::time::timeout(Duration::from_secs(5), child.wait())
@@ -179,6 +179,31 @@ async fn terminate(child: &mut Child) {
         {
             return;
         }
+    }
+    let _ = child.kill().await;
+}
+
+async fn terminate_tree(child: &mut Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        let pid = pid.to_string();
+        let _ = Command::new("sh")
+            .args(["-c", "kill -TERM \"$1\"", "sh", &pid])
+            .status()
+            .await;
+        // The endpoint leader owns and waits for every direct worker. Give it
+        // time to reap that tree before using the process-group hard fallback.
+        if tokio::time::timeout(Duration::from_secs(10), child.wait())
+            .await
+            .is_ok()
+        {
+            return;
+        }
+        let _ = Command::new("sh")
+            .args(["-c", "kill -KILL -\"$1\"", "sh", &pid])
+            .status()
+            .await;
+        return;
     }
     let _ = child.kill().await;
 }
@@ -322,6 +347,7 @@ pub async fn run_endpoint() -> Result<()> {
             _ = tokio::time::sleep(Duration::from_secs(2)) => {
                 for process in children.iter_mut() {
                     if let Some(status) = process.try_wait()? {
+                        tracing::error!(%status, "endpoint child exited; terminating endpoint tree");
                         stop(&mut children).await;
                         bail!("endpoint child exited with {status}")
                     }
@@ -349,7 +375,7 @@ pub async fn run_optional() -> Result<()> {
             }
             signal = termination_signal() => {
                 signal?;
-                let _ = process.kill().await;
+                terminate(&mut process).await;
                 return Ok(());
             }
         }
@@ -446,7 +472,7 @@ pub async fn run_manager() -> Result<()> {
             .collect();
         for serial in stale {
             if let Some((_, mut child)) = active.remove(&serial) {
-                terminate(&mut child).await;
+                terminate_tree(&mut child).await;
             }
         }
         for (serial, endpoint) in desired {
@@ -455,6 +481,7 @@ pub async fn run_manager() -> Result<()> {
             }
             let child = Command::new(&executable)
                 .arg("endpoint")
+                .process_group(0)
                 .env("ENDPOINT_SERIAL", &endpoint.serial)
                 .env("ENDPOINT_VIRTUAL_IP", &endpoint.virtual_ip)
                 .env("ENDPOINT_PHYSICAL_IP", &endpoint.ip)
@@ -475,7 +502,7 @@ pub async fn run_manager() -> Result<()> {
         tokio::select! {
             signal = termination_signal() => {
                 signal?;
-                for (_, (_, mut child)) in active { terminate(&mut child).await; }
+                for (_, (_, mut child)) in active { terminate_tree(&mut child).await; }
                 return Ok(());
             }
             _ = tokio::time::sleep(Duration::from_secs(5)) => {}

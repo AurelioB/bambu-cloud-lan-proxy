@@ -1,7 +1,10 @@
 # Full Rust migration plan
 
-Status: implemented on `migration/full-rust`. The existing live containers are
-left untouched until the replacement image passes the supervised cutover checklist.
+Status: implementation and supervised cutover are complete on
+`migration/full-rust`. The Rust stack is the active deployment. The remaining
+release gates are the operator-observed Handy/Studio check and a deliberately
+selected physical print/cancel test; those cannot be inferred from service
+health or performed with an arbitrary fixture.
 
 ## Target architecture
 
@@ -31,9 +34,11 @@ left untouched until the replacement image passes the supervised cutover checkli
    policy gates, account sign-in, and public proxy-CA export.
 5. Replaced Python images and Compose entrypoints, deleted Python runtime source,
    and updated bootstrap, CI, documentation, attribution, and operator tooling.
-6. Rust/unit/UI/Compose checks run in CI. Container build and physical-printer
-   verification remain explicit release/cutover gates because they require Docker,
-   the Bambu CDN/account, and operator supervision.
+6. Deployed the production image, migrated the live stack, verified Bambuddy,
+   telemetry, controls, local camera, local/cloud file browsing and download,
+   safe file upload, process/broker recovery, least privilege, and rollback
+   artifacts. The final operator-observed gates are tracked in
+   `release-validation-v0.6.0.md`.
 
 ## Compatibility and safety gates
 

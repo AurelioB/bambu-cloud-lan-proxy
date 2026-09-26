@@ -45,6 +45,7 @@ enum Command {
     Ftps,
     LocalStatus,
     NativeFiles,
+    NativeProbe,
     TcpRelay,
 }
 
@@ -75,6 +76,7 @@ async fn main() -> Result<()> {
         Command::Ftps => ftps::run().await,
         Command::LocalStatus => local_status::run().await,
         Command::NativeFiles => native_files::run().await,
+        Command::NativeProbe => native_files::probe().await,
         Command::TcpRelay => tcp_relay::run().await,
     }
 }
