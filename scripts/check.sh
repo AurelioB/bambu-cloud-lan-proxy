@@ -1,21 +1,10 @@
 #!/bin/sh
 set -eu
-
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_dir"
-
-python_bin=${PYTHON:-}
-if [ -z "$python_bin" ]; then
-  if [ -x .venv/bin/python ]; then
-    python_bin=.venv/bin/python
-  elif command -v python >/dev/null 2>&1; then
-    python_bin=python
-  else
-    python_bin=python3
-  fi
-fi
-
-"$python_bin" -m pytest
-"$python_bin" -m ruff check \
-  src tests scripts/verify_ftps.py scripts/verify_camera.py scripts/verify_native.py
+cargo fmt --check
+npm --prefix web ci
+npm --prefix web run check
+npm --prefix web run build
+cargo test --locked
 docker compose config --quiet

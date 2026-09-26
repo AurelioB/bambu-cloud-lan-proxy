@@ -1,0 +1,36 @@
+Bambu Gateway was reviewed as a reference for Bambu's plugin ABI and session
+protocol. It is not included or imported by this implementation. This is a
+source-informed reimplementation, not a claim of clean-room provenance.
+The following notice is retained for protocol/ABI material informed by that
+review (commit 79db09fff4929e9a7537453078031a51b3834c5f):
+
+MIT License
+
+Copyright (c) 2026 Leonardo Lobato
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Bambu's proprietary networking/media libraries are NOT distributed here and
+retain their own license terms. They are fetched from Bambu's CDN and checked
+against explicitly reviewed binary hashes. Their use is not an official
+endorsement of this proxy by Bambu Lab.
+
+nlohmann/json is installed from Debian's package repository when building
+the native adapter. Its MIT license is available with that package and at
+https://github.com/nlohmann/json/blob/develop/LICENSE.MIT

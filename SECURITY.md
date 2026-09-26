@@ -25,7 +25,8 @@ real physical prints and should be treated as write access to the printer.
 The following paths contain credentials and are ignored by Git:
 
 - `.env` — the local MQTT access code
-- `data/gateway/` — Bambu Gateway account session data
+- `data/gateway/` — Rust proxy account/plugin state (the directory name is
+  retained for deployment compatibility; Bambu Gateway is not installed)
 - `data/proxy/certs/ca.key` — the local proxy CA private key
 - `data/proxy/certs/server.key` — the local TLS server private key
 - `data/proxy/auth/passwords` — the Mosquitto password database
@@ -34,10 +35,14 @@ The following paths contain credentials and are ignored by Git:
 - `data/staging/` — user-supplied print files (which may contain private model
   geometry and metadata)
 
-The camera service has host networking solely to reach the local printer, but
-binds its client-facing listener to Docker's private host gateway. A separate
-unprivileged ingress publishes only the authenticated RTSPS byte stream on the
-configured proxy address. Both run read-only, without added Linux capabilities.
+The endpoint manager uses host networking so each printer can bind the same
+standard ports on a different private virtual IP. It runs read-only with only
+`NET_BIND_SERVICE`; it does not have network-administration capability. The
+`endpoint-addresses` manager has `NET_ADMIN` solely to reconcile explicitly
+configured private `/32` aliases after configuration changes and host reboots.
+It mounts the registry read-only, has no cloud/plugin state or TLS keys, and
+records only the aliases it owns so disabled or changed endpoints can be
+removed safely. A one-shot reconciliation command remains available.
 
 Only `data/proxy/export/bambu-cloud-lan-proxy-ca.crt` is intended for export.
 It is a public certificate, not a private key.

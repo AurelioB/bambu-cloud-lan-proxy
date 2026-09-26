@@ -26,6 +26,14 @@ if grep -q '^PGID=1000$' .env; then
 fi
 
 mkdir -p data/gateway data/proxy data/camera
+if [ ! -e data/gateway/printers.json ]; then
+  printf '[]\n' > data/gateway/printers.json
+  chmod 600 data/gateway/printers.json
+fi
+if [ ! -f data/gateway/printers.json ]; then
+  echo 'data/gateway/printers.json must be a regular JSON file, not a directory' >&2
+  exit 1
+fi
 docker compose run --rm --build bootstrap
 
 echo "Initialization complete. Secrets are in .env and data/ (both ignored by Git)."

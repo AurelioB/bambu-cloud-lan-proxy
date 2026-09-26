@@ -12,14 +12,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
-          python-version: "3.13"
-          cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest
-      - run: python -m ruff check src tests scripts/verify_ftps.py
+          components: rustfmt
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: cargo fmt --check
+      - run: npm ci
+        working-directory: web
+      - run: npm run check
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: cargo test --locked
       - run: cp .env.example .env
       - run: sed -i 's/PROXY_ACCESS_CODE=CHANGE_ME/PROXY_ACCESS_CODE=TEST1234/' .env
       - run: docker compose config --quiet
+      - run: docker build -f Dockerfile.proxy -t bambu-cloud-lan-proxy:test .
+      - run: docker run --rm --network none bambu-cloud-lan-proxy:test --version

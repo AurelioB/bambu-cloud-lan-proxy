@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS web-builder
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run check && npm run build
+
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS native-builder
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends cmake g++ libssl-dev make nlohmann-json3-dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY native /src/native
+RUN cmake -S /src/native -B /build -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build /build --parallel
+
+FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS rust-builder
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY --from=web-builder /src/web/dist ./web/dist
+RUN cargo build --locked --release
+
+FROM bluenviron/mediamtx@sha256:1b029d11049be75630e9b73bb0d5f47b08a7db4eaee89a80bf8f53bc40e56414 AS mediamtx
+
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
+ARG PROXY_VERSION="dev"
+LABEL org.opencontainers.image.title="Bambu Cloud LAN Proxy" \
+      org.opencontainers.image.version="${PROXY_VERSION}" \
+      org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy" \
+      org.opencontainers.image.licenses="MIT"
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl iproute2 libssl3 openssl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 1883 bambuproxy \
+ && useradd --uid 1883 --gid 1883 --no-create-home bambuproxy
+COPY --from=rust-builder /src/target/release/bambu-cloud-lan-proxy /usr/local/bin/bambu-cloud-lan-proxy
+COPY --from=native-builder /build/bambu-proxy-native /usr/local/bin/bambu-proxy-native
+COPY --from=native-builder /usr/share/doc/nlohmann-json3-dev/copyright /usr/share/licenses/nlohmann-json/copyright
+COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
+COPY LICENSE THIRD_PARTY_NOTICES /usr/share/licenses/bambu-cloud-lan-proxy/
+VOLUME /data
+EXPOSE 4844
+ENTRYPOINT ["/usr/local/bin/bambu-cloud-lan-proxy"]

@@ -1,5 +1,8 @@
 #!/bin/sh
 set -eu
-
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-exec python3 "$project_dir/scripts/verify_camera.py"
+cd "$project_dir"
+. ./.env
+host=${PROXY_BIND_IP:-127.0.0.2}
+timeout 5 openssl s_client -connect "${host}:322" </dev/null >/dev/null 2>&1
+echo "RTSPS TLS handshake succeeded"

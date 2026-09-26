@@ -7,3 +7,7 @@ docs
 *.md
 __pycache__
 .pytest_cache
+target
+web/node_modules
+web/dist
+.venv
