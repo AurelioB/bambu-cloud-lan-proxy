@@ -17,6 +17,7 @@ tokens, media URLs, and certificate material.
 | Storage mutation | A uniquely named 287-byte valid ZIP fixture uploaded to `emmc` and appeared in the model listing. The fixture exposed a firmware delete inconsistency described below. |
 | Camera | Authenticated RTSPS returned H.264 at 1680×1080 through the virtual endpoint. |
 | Controls | A signed chamber-light command changed the physical light and the original state was restored. |
+| Controlled print | The most recent known-good printer-resident job was re-submitted through the virtual MQTT endpoint with its recorded plate and AMS mapping. Fresh telemetry identified the expected title in `RUNNING` at 0%; cancellation was then sent through the same endpoint and fresh status settled at `FAILED`, 0%, zero remaining time, with nozzle and bed near ambient. No replay was attempted. |
 | Recovery | MQTT, address-manager, gateway, endpoint-manager, and an individual relay failure recovered. Old endpoint process groups and camera workers were reaped; no matching zombies remained. |
 | Security | Public host ports bind only to loopback. Gateway/MQTT have no capabilities; the endpoint manager has only `NET_BIND_SERVICE`; the address manager alone has `NET_ADMIN`; runtime application UIDs are non-root. |
 | Build checks | Rust formatting/tests, Svelte checks/build, Compose validation, production image build, and whitespace checks pass. |
@@ -38,11 +39,8 @@ printer; no existing user file was modified during this test.
 
 - Confirm Bambu Handy and Bambu Studio still operate normally against the
   cloud-paired printer.
-- Select a known-safe sliced job and supervise start, visible progress, and
-  cancellation through the virtual endpoint. An arbitrary or synthetic 3MF is
-  never used for this gate.
 - A physical host reboot is optional but recommended. Container, broker,
   address-manager, and child-process recovery have already been exercised.
 
-The branch must not be merged or tagged `v0.6.0` until the first two operator
-gates are recorded as passed.
+The branch must not be merged or tagged `v0.6.0` until Handy and Studio
+continuity are recorded as passed.
