@@ -391,6 +391,14 @@ json StorageBridge::remove(PluginLoader& loader, const std::string& dev_id,
   if (paths.empty() || paths.size() > 100)
     throw std::runtime_error("invalid delete request");
   for (const auto& path : paths) validate_remote(path);
+  if (std::any_of(paths.begin(), paths.end(), [](const std::string& path) {
+        auto lower = path;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char value) { return std::tolower(value); });
+        return lower.find("/userdata/model/history/") != std::string::npos;
+      }))
+    throw std::runtime_error(
+        "internal model history deletion is unsupported; use the printer UI");
   Session session(loader, dev_id);
   session.request(3, {{"paths", paths}});
   auto frame = session.response(std::chrono::steady_clock::now() + std::chrono::seconds(60));

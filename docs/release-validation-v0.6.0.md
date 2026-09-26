@@ -27,10 +27,12 @@ On the supervised printer, an uploaded synthetic history fixture is returned by
 `LIST_INFO`, but the firmware rejects the official `paths` delete form with
 `ERROR_JSON` and acknowledges the legacy name form without removing the entry.
 The behavior was reproduced directly against local port 6000, outside the
-proxy. The proxy now verifies legacy delete acknowledgements and reports a
-failure if the entry remains. The synthetic entry must be removed from the
-printer UI if the firmware continues to retain it; no existing user file was
-modified during this test.
+proxy. Independent protocol research also documents internal model-history
+deletion as unsupported through port 6000. The proxy now rejects that category
+with an explicit internal diagnostic, verifies other legacy delete
+acknowledgements, and reports a failure if an entry remains. The synthetic entry
+must be removed by long-pressing it under **Print Files → Internal** on the
+printer; no existing user file was modified during this test.
 
 ## Operator gates before merge/tag
 

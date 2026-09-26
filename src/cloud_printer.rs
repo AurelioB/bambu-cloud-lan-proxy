@@ -251,3 +251,63 @@ impl CloudPrinter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{os::unix::fs::PermissionsExt, time::SystemTime};
+
+    #[tokio::test]
+    async fn timed_out_submission_stays_latched_across_restart() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cloud-printer-latch-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let host_script = root.join("hanging-host.sh");
+        fs::write(
+            &host_script,
+            b"#!/bin/sh\nIFS= read -r first\nIFS= read -r second\n",
+        )
+        .unwrap();
+        fs::set_permissions(&host_script, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let host = PluginRpc::start(host_script.to_str().unwrap(), &[])
+            .await
+            .unwrap();
+        let printer = CloudPrinter::new("TESTSERIAL".into(), host.clone(), root.clone());
+        printer.set_connected(true);
+        printer.set_secure(true);
+        printer
+            .receive(&json!({"print":{"gcode_state":"IDLE"}}))
+            .await;
+
+        let mut events = printer
+            .submit_print(json!({}), Duration::from_millis(20))
+            .await
+            .unwrap();
+        let terminal = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal["kind"], "PrintComplete");
+        assert!(root.join("TESTSERIAL.pending").is_file());
+        assert_eq!(printer.status().await.state, "uncertain");
+
+        printer.complete_submission(false).await;
+        let restarted = CloudPrinter::new("TESTSERIAL".into(), host.clone(), root.clone());
+        assert_eq!(restarted.status().await.state, "uncertain");
+        assert!(
+            restarted
+                .submit_print(json!({}), Duration::from_millis(20))
+                .await
+                .is_err()
+        );
+
+        restarted.complete_submission(true).await;
+        assert!(!root.join("TESTSERIAL.pending").exists());
+        host.stop().await;
+        let _ = fs::remove_dir_all(root);
+    }
+}
