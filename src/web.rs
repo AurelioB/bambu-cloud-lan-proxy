@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
 use crate::{
+    capabilities::PrinterCapabilities,
     cloud_auth,
     config::{ProxyMode, env_bool, env_value},
     service::Session,
@@ -157,10 +158,15 @@ async fn overview(
     for (serial, printer) in printers.iter() {
         let status = printer.status().await;
         let entry = metadata.get(serial);
+        let model = entry
+            .and_then(|value| value.get("machine_model"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
         values.push(json!({
             "serial": serial,
             "name": entry.and_then(|v|v.get("name")).and_then(Value::as_str).unwrap_or(""),
-            "model": entry.and_then(|v|v.get("machine_model")).and_then(Value::as_str).unwrap_or(""),
+            "model": model,
+            "capabilities": PrinterCapabilities::from_model(model),
             "virtual_ip": entry.and_then(|v|v.get("virtual_ip")).and_then(Value::as_str).unwrap_or(""),
             "physical_ip": entry.and_then(|v|v.get("ip")).and_then(Value::as_str).unwrap_or(""),
             "physical_access_configured": entry.and_then(|v|v.get("access_code")).and_then(Value::as_str).is_some_and(|v|!v.is_empty()),

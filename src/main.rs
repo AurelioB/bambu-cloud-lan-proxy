@@ -1,5 +1,6 @@
 mod bridge;
 mod camera;
+mod capabilities;
 mod cloud_auth;
 mod cloud_printer;
 mod commands;

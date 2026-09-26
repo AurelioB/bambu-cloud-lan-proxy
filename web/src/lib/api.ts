@@ -10,6 +10,13 @@ export interface Printer {
   online: boolean;
   state: string;
   secure_control: boolean;
+  capabilities: {
+    camera: "rtsps" | "image" | "unknown";
+    local_camera_bridge: boolean;
+    chamber_temperature: boolean;
+    dual_nozzle: boolean;
+    source: "model_profile" | "unknown";
+  };
 }
 export interface Overview { healthy: boolean; signed_in: boolean; cloud_connected: boolean; region: string; printers: Printer[] }
 export interface Settings {

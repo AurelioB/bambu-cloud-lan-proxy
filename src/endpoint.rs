@@ -11,7 +11,10 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tokio::process::{Child, Command};
 
-use crate::config::{env_bool, env_value};
+use crate::{
+    capabilities::PrinterCapabilities,
+    config::{env_bool, env_value},
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct Endpoint {
@@ -158,6 +161,7 @@ pub async fn run_endpoint() -> Result<()> {
     let serial = env_value("ENDPOINT_SERIAL", "").to_ascii_uppercase();
     let virtual_ip = env_value("ENDPOINT_VIRTUAL_IP", "");
     let physical_ip = env_value("ENDPOINT_PHYSICAL_IP", "");
+    let model = env_value("ENDPOINT_MODEL", "Bambu Lab Printer");
     let access = env_value("PROXY_ACCESS_CODE", "");
     if serial.is_empty() || virtual_ip.is_empty() || access.len() != 8 {
         bail!("ENDPOINT_SERIAL, ENDPOINT_VIRTUAL_IP, and PROXY_ACCESS_CODE are required")
@@ -224,10 +228,7 @@ pub async fn run_endpoint() -> Result<()> {
     environment.extend([
         ("DISCOVERY_PRINTER_IP", virtual_ip.clone()),
         ("DISCOVERY_PRINTER_SERIAL", serial.clone()),
-        (
-            "DISCOVERY_PRINTER_MODEL",
-            env_value("ENDPOINT_MODEL", "Bambu Lab Printer"),
-        ),
+        ("DISCOVERY_PRINTER_MODEL", model.clone()),
         (
             "DISCOVERY_PRINTER_NAME",
             env_value("ENDPOINT_NAME", "Bambu Cloud LAN Proxy"),
@@ -236,23 +237,27 @@ pub async fn run_endpoint() -> Result<()> {
     children.push(child("discovery", &environment)?);
 
     if !physical_ip.is_empty() && env_bool("ENDPOINT_PHYSICAL_ACCESS_CONFIGURED", false)? {
-        let mut environment = common.clone();
-        environment.extend([
-            (
-                "CAMERA_GATEWAY_REGISTRY",
-                env_value("ENDPOINT_REGISTRY", "/data/printers.json"),
-            ),
-            ("CAMERA_PRINTER_SERIAL", serial.clone()),
-            ("CAMERA_UPSTREAM_IP", physical_ip.clone()),
-            ("CAMERA_LISTEN_IP", virtual_ip.clone()),
-            ("CAMERA_LISTEN_PORT", "322".into()),
-            ("CAMERA_CONFIG_PATH", format!("/tmp/mediamtx-{serial}.json")),
-            (
-                "CAMERA_STATE_DIR",
-                env_value("ENDPOINT_CAMERA_STATE_DIR", "/camera-state"),
-            ),
-        ]);
-        children.push(optional_child("camera", &environment)?);
+        if PrinterCapabilities::from_model(&model).local_camera_bridge {
+            let mut environment = common.clone();
+            environment.extend([
+                (
+                    "CAMERA_GATEWAY_REGISTRY",
+                    env_value("ENDPOINT_REGISTRY", "/data/printers.json"),
+                ),
+                ("CAMERA_PRINTER_SERIAL", serial.clone()),
+                ("CAMERA_UPSTREAM_IP", physical_ip.clone()),
+                ("CAMERA_LISTEN_IP", virtual_ip.clone()),
+                ("CAMERA_LISTEN_PORT", "322".into()),
+                ("CAMERA_CONFIG_PATH", format!("/tmp/mediamtx-{serial}.json")),
+                (
+                    "CAMERA_STATE_DIR",
+                    env_value("ENDPOINT_CAMERA_STATE_DIR", "/camera-state"),
+                ),
+            ]);
+            children.push(optional_child("camera", &environment)?);
+        } else {
+            tracing::info!(%serial, %model, "RTSPS camera bridge is not available for this model profile");
+        }
 
         if env_bool("ENDPOINT_LOCAL_STATUS", true)? {
             let mut environment = common;

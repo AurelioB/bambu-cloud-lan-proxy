@@ -117,6 +117,8 @@ docker compose logs --tail=200 gateway mqtt endpoint-manager
 
 Camera and local MQTT certificates use trust-on-first-use pins under `data/camera/` and `data/local-status/`. If the printer legitimately replaces a certificate, compare the new fingerprint out of band before removing the corresponding pin file.
 
+The admin API exposes conservative capability profiles for each discovered model. RTSPS-capable printers can use the local port-322 camera bridge. A1, A1 mini, A2L, and P1P-class image cameras are identified in the UI but are not currently translated; the endpoint still provides cloud control, telemetry, and proxy file services. Unknown future models are reported as unknown instead of being assumed compatible.
+
 To update, pull the reviewed source and rebuild. Plugin updates intentionally fail closed until their version and hashes are reviewed and updated in source.
 
 ## Architecture and limits
