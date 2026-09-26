@@ -9,9 +9,9 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-docker compose run --rm --build endpoint-addresses
 docker compose run --rm --build bootstrap
+docker compose up -d --build --force-recreate endpoint-addresses
 docker compose up -d --build --force-recreate mqtt endpoint-manager
-docker compose ps mqtt gateway endpoint-manager
+docker compose ps mqtt gateway endpoint-addresses endpoint-manager
 
 echo "Printer endpoint addresses, certificates, and listeners are applied."

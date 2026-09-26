@@ -38,9 +38,9 @@ Edit `.env` before the first full start. For LAN addresses, set the Linux interf
 
 ```dotenv
 PROXY_ENDPOINT_INTERFACE=eth0
-PROXY_MODE=full_control
-PROXY_ALLOW_CANCEL=true
-PROXY_CLOUD_PRINT_ENABLED=true
+PROXY_MODE=read_only
+PROXY_ALLOW_CANCEL=false
+PROXY_CLOUD_PRINT_ENABLED=false
 PROXY_PRINTERS=
 ```
 
@@ -82,7 +82,9 @@ Apply the addresses and regenerate the proxy certificate with every virtual IP i
 ./scripts/apply-endpoints.sh
 ```
 
-The privileged address helper is a one-shot container with `NET_ADMIN`; the long-running cloud core and endpoint manager do not receive network-administration capability. On a standalone Linux installation, the equivalent command is `sudo ENDPOINT_REGISTRY=/path/to/printers.json ENDPOINT_INTERFACE=eth0 bambu-cloud-lan-proxy endpoint-addresses`, followed by the normal services and `endpoint-manager`.
+The narrowly scoped address manager is the only long-running container with `NET_ADMIN`. It reconciles the configured aliases every 15 seconds, removes only addresses recorded in its private managed-address state, and restores them automatically after a host reboot. The cloud core and endpoint manager do not receive network-administration capability. On a standalone Linux installation, run `endpoint-address-manager` under an equivalent supervised boot service; `endpoint-addresses` remains available as a one-shot reconciliation command.
+
+The endpoint manager publishes per-printer MQTT, FTPS, native-file, and applicable camera health to the admin console. Core endpoint processes are restarted automatically; failure of the isolated native plugin exits the cloud container so Compose can restart it without replaying commands.
 
 ## Bambuddy / LAN client setup
 

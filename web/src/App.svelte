@@ -41,6 +41,13 @@
     return "Camera unknown";
   }
 
+  function endpointHealthLabel(printer: Printer) {
+    if (printer.endpoint_health.state === "healthy") return "Endpoint healthy";
+    if (printer.endpoint_health.state === "degraded") return "Endpoint degraded";
+    if (printer.endpoint_health.state === "unavailable") return "Endpoint unavailable";
+    return "Endpoint disabled";
+  }
+
   async function refresh() {
     if (!accessCode) return;
     loading = true;
@@ -193,6 +200,7 @@
                         <Badge variant="outline">{printer.state}</Badge>
                         <Badge variant={printer.secure_control ? "secondary" : "outline"}>{printer.secure_control ? "Control ready" : "Awaiting certificate"}</Badge>
                         <Badge variant={printer.endpoint_enabled && printer.virtual_ip ? "secondary" : "outline"}>{printer.endpoint_enabled && printer.virtual_ip ? printer.virtual_ip : "Endpoint not configured"}</Badge>
+                        {#if printer.endpoint_enabled && printer.virtual_ip}<Badge variant={printer.endpoint_health.state === "healthy" ? "secondary" : printer.endpoint_health.state === "degraded" ? "destructive" : "outline"}>{endpointHealthLabel(printer)}</Badge>{/if}
                         <Badge variant="outline">{cameraLabel(printer)}</Badge>
                         <Badge variant="outline">{printer.capabilities.dual_nozzle ? "Dual nozzle" : "Single nozzle"}</Badge>
                         {#if printer.capabilities.chamber_temperature}<Badge variant="outline">Chamber sensor</Badge>{/if}
@@ -262,6 +270,7 @@
                               <Badge variant="outline">{cameraLabel(printer)}</Badge>
                               <Badge variant="outline">{printer.capabilities.dual_nozzle ? "Dual nozzle" : "Single nozzle"}</Badge>
                               {#if printer.capabilities.chamber_temperature}<Badge variant="outline">Chamber telemetry</Badge>{/if}
+                              {#if printer.endpoint_enabled}<Badge variant={printer.endpoint_health.state === "healthy" ? "secondary" : printer.endpoint_health.state === "degraded" ? "destructive" : "outline"}>{endpointHealthLabel(printer)}</Badge>{/if}
                             </div>
                             {#if printer.capabilities.camera === "image"}
                               <Alert.Root><VideoIcon /><Alert.Title>Image camera detected</Alert.Title><Alert.Description>This model's local image-stream protocol is not bridged yet. Cloud control, telemetry, and proxy file services remain available.</Alert.Description></Alert.Root>

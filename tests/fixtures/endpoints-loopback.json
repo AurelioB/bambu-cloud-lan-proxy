@@ -1,0 +1,11 @@
+[
+  {
+    "serial": "TESTPRINTER01",
+    "name": "Loopback fixture",
+    "machine_model": "X1 Carbon",
+    "virtual_ip": "127.0.0.42",
+    "endpoint_enabled": true,
+    "ip": "",
+    "access_code": ""
+  }
+]

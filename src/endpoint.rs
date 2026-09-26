@@ -1,15 +1,18 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
-use tokio::process::{Child, Command};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    net::TcpStream,
+    process::{Child, Command},
+};
 
 use crate::{
     capabilities::PrinterCapabilities,
@@ -31,6 +34,29 @@ struct Endpoint {
     virtual_ip: String,
     #[serde(default = "enabled")]
     endpoint_enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct ManagedAddress {
+    address: Ipv4Addr,
+    interface: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct EndpointRuntimeStatus {
+    serial: String,
+    virtual_ip: String,
+    process_running: bool,
+    mqtt: bool,
+    ftps: bool,
+    files: bool,
+    camera: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct EndpointManagerStatus {
+    updated_at: u64,
+    endpoints: Vec<EndpointRuntimeStatus>,
 }
 
 fn enabled() -> bool {
@@ -330,8 +356,76 @@ pub async fn run_optional() -> Result<()> {
     }
 }
 
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
+    let parent = path.parent().context("state path has no parent")?;
+    fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("state"),
+        std::process::id()
+    ));
+    fs::write(&temporary, serde_json::to_vec_pretty(value)?)?;
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+async fn port_ready(address: &str, port: u16) -> bool {
+    tokio::time::timeout(
+        Duration::from_millis(750),
+        TcpStream::connect((address, port)),
+    )
+    .await
+    .is_ok_and(|result| result.is_ok())
+}
+
+async fn write_manager_status(
+    path: &Path,
+    active: &BTreeMap<String, (Endpoint, Child)>,
+) -> Result<()> {
+    let mut endpoints = Vec::with_capacity(active.len());
+    for (serial, (endpoint, child)) in active {
+        let address = &endpoint.virtual_ip;
+        let camera_expected = !endpoint.ip.is_empty()
+            && !endpoint.access_code.is_empty()
+            && PrinterCapabilities::from_model(&endpoint.machine_model).local_camera_bridge;
+        endpoints.push(EndpointRuntimeStatus {
+            serial: serial.clone(),
+            virtual_ip: address.clone(),
+            process_running: child.id().is_some(),
+            mqtt: port_ready(address, 8883).await,
+            ftps: port_ready(address, 990).await,
+            files: port_ready(address, 6000).await,
+            camera: if camera_expected {
+                Some(port_ready(address, 322).await)
+            } else {
+                None
+            },
+        });
+    }
+    write_json_atomic(
+        path,
+        &EndpointManagerStatus {
+            updated_at: unix_seconds(),
+            endpoints,
+        },
+    )
+}
+
 pub async fn run_manager() -> Result<()> {
     let registry = PathBuf::from(env_value("ENDPOINT_REGISTRY", "/data/printers.json"));
+    let status_file = PathBuf::from(env_value(
+        "ENDPOINT_STATUS_FILE",
+        "/endpoint-state/status.json",
+    ));
     let executable = std::env::current_exe()?;
     let mut active: BTreeMap<String, (Endpoint, Child)> = BTreeMap::new();
     loop {
@@ -375,6 +469,9 @@ pub async fn run_manager() -> Result<()> {
                 .spawn()?;
             active.insert(serial, (endpoint, child));
         }
+        if let Err(error) = write_manager_status(&status_file, &active).await {
+            tracing::warn!(%error, "could not publish endpoint health");
+        }
         tokio::select! {
             signal = termination_signal() => {
                 signal?;
@@ -386,11 +483,16 @@ pub async fn run_manager() -> Result<()> {
     }
 }
 
-pub async fn configure_addresses() -> Result<()> {
-    let registry = PathBuf::from(env_value("ENDPOINT_REGISTRY", "/data/printers.json"));
-    let interface = env_value("ENDPOINT_INTERFACE", "");
-    let endpoints = load(&registry)?;
-    for endpoint in endpoints.values() {
+fn address_state_path() -> PathBuf {
+    PathBuf::from(env_value(
+        "ENDPOINT_ADDRESS_STATE",
+        "/address-state/managed.json",
+    ))
+}
+
+fn desired_addresses(registry: &Path, interface: &str) -> Result<BTreeSet<ManagedAddress>> {
+    let mut desired = BTreeSet::new();
+    for endpoint in load(registry)?.values() {
         let address: Ipv4Addr = endpoint.virtual_ip.parse()?;
         if address.is_loopback() {
             continue;
@@ -398,31 +500,118 @@ pub async fn configure_addresses() -> Result<()> {
         if interface.is_empty() {
             bail!("ENDPOINT_INTERFACE is required for non-loopback virtual IPs")
         }
-        let present = Command::new("ip")
-            .args(["address", "show", "to", &format!("{address}/32")])
-            .output()
-            .await?;
-        if !present.status.success() {
-            bail!("could not inspect host addresses")
+        desired.insert(ManagedAddress {
+            address,
+            interface: interface.to_owned(),
+        });
+    }
+    Ok(desired)
+}
+
+async fn address_present(address: Ipv4Addr) -> Result<bool> {
+    let output = Command::new("ip")
+        .args(["address", "show", "to", &format!("{address}/32")])
+        .output()
+        .await?;
+    if !output.status.success() {
+        bail!("could not inspect host address {address}")
+    }
+    Ok(!output.stdout.is_empty())
+}
+
+async fn change_address(action: &str, address: &ManagedAddress) -> Result<()> {
+    let status = Command::new("ip")
+        .args([
+            "address",
+            action,
+            &format!("{}/32", address.address),
+            "dev",
+            &address.interface,
+        ])
+        .status()
+        .await?;
+    if !status.success() {
+        bail!(
+            "failed to {action} {} on {}",
+            address.address,
+            address.interface
+        )
+    }
+    Ok(())
+}
+
+async fn reconcile_addresses() -> Result<()> {
+    let registry = PathBuf::from(env_value("ENDPOINT_REGISTRY", "/data/printers.json"));
+    let interface = env_value("ENDPOINT_INTERFACE", "");
+    let state_path = address_state_path();
+    let desired = desired_addresses(&registry, &interface)?;
+    let previous: BTreeSet<ManagedAddress> = match fs::read(&state_path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).context("invalid managed-address state")?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
+        Err(error) => return Err(error.into()),
+    };
+    for stale in previous.difference(&desired) {
+        if address_present(stale.address).await? {
+            change_address("del", stale).await?;
+            tracing::info!(address=%stale.address, interface=%stale.interface, "removed stale virtual printer IP");
         }
-        if !present.stdout.is_empty() {
-            tracing::info!(%address, "virtual IP is already configured");
-            continue;
+    }
+    for address in &desired {
+        if !address_present(address.address).await? {
+            change_address("add", address).await?;
+            tracing::info!(address=%address.address, interface=%address.interface, "configured virtual printer IP");
         }
-        let status = Command::new("ip")
-            .args([
-                "address",
-                "add",
-                &format!("{address}/32"),
-                "dev",
-                &interface,
-            ])
-            .status()
-            .await?;
-        if !status.success() {
-            bail!("failed to add {address} to {interface}")
+    }
+    write_json_atomic(&state_path, &desired)?;
+    Ok(())
+}
+
+pub async fn configure_addresses() -> Result<()> {
+    reconcile_addresses().await
+}
+
+pub async fn run_address_manager() -> Result<()> {
+    loop {
+        if let Err(error) = reconcile_addresses().await {
+            tracing::warn!(%error, "virtual printer address reconciliation failed");
         }
-        tracing::info!(%address, %interface, "configured virtual printer IP");
+        tokio::select! {
+            signal = termination_signal() => return signal,
+            _ = tokio::time::sleep(Duration::from_secs(15)) => {}
+        }
+    }
+}
+
+pub async fn check_addresses() -> Result<()> {
+    let registry = PathBuf::from(env_value("ENDPOINT_REGISTRY", "/data/printers.json"));
+    let interface = env_value("ENDPOINT_INTERFACE", "");
+    for address in desired_addresses(&registry, &interface)? {
+        if !address_present(address.address).await? {
+            bail!("virtual printer IP {} is missing", address.address)
+        }
+    }
+    Ok(())
+}
+
+pub fn check_manager_status() -> Result<()> {
+    let status_path = PathBuf::from(env_value(
+        "ENDPOINT_STATUS_FILE",
+        "/endpoint-state/status.json",
+    ));
+    let status: EndpointManagerStatus = serde_json::from_slice(&fs::read(status_path)?)?;
+    validate_manager_status(&status, unix_seconds())
+}
+
+fn validate_manager_status(status: &EndpointManagerStatus, now: u64) -> Result<()> {
+    if now.saturating_sub(status.updated_at) > 30 {
+        bail!("endpoint manager status is stale")
+    }
+    if status
+        .endpoints
+        .iter()
+        .any(|endpoint| !endpoint.process_running)
+    {
+        bail!("an endpoint supervisor is not running")
     }
     Ok(())
 }
@@ -454,5 +643,32 @@ mod tests {
         )
         .unwrap();
         assert!(load(&path).is_err());
+    }
+
+    #[test]
+    fn endpoint_health_rejects_stale_or_stopped_manager() {
+        let healthy = EndpointManagerStatus {
+            updated_at: 100,
+            endpoints: vec![EndpointRuntimeStatus {
+                serial: "SERIALA".into(),
+                virtual_ip: "192.168.10.201".into(),
+                process_running: true,
+                mqtt: false,
+                ftps: false,
+                files: false,
+                camera: None,
+            }],
+        };
+        assert!(validate_manager_status(&healthy, 120).is_ok());
+        assert!(validate_manager_status(&healthy, 131).is_err());
+
+        let stopped = EndpointManagerStatus {
+            updated_at: 100,
+            endpoints: vec![EndpointRuntimeStatus {
+                process_running: false,
+                ..healthy.endpoints[0].clone()
+            }],
+        };
+        assert!(validate_manager_status(&stopped, 100).is_err());
     }
 }

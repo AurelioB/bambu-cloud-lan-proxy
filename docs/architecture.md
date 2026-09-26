@@ -75,6 +75,13 @@ the normal Bambu ports while sharing one cloud session and internal MQTT
 broker. Per-printer staging directories and injected serials prevent file and
 command routing from crossing endpoint boundaries.
 
+A separate least-privilege address manager owns `NET_ADMIN`, records only the
+aliases it manages, and continuously reconciles them onto the configured host
+interface. This restores virtual printer IPs after reboot without granting
+network-administration capability to the cloud or endpoint processes. Endpoint
+service probes are written to a shared read-only status projection consumed by
+the admin API.
+
 The camera is the exception because H-series LAN-only liveview remains a direct
 local RTSPS service while cloud pairing is active. An unprivileged MediaMTX
 process uses the physical access code, pins the upstream leaf certificate

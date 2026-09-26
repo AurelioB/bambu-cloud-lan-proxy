@@ -38,9 +38,11 @@ The following paths contain credentials and are ignored by Git:
 The endpoint manager uses host networking so each printer can bind the same
 standard ports on a different private virtual IP. It runs read-only with only
 `NET_BIND_SERVICE`; it does not have network-administration capability. The
-`endpoint-addresses` one-shot helper has `NET_ADMIN` solely to add explicitly
-configured private `/32` aliases. It mounts the registry read-only, has no
-cloud/plugin state or TLS keys, and exits immediately after reconciliation.
+`endpoint-addresses` manager has `NET_ADMIN` solely to reconcile explicitly
+configured private `/32` aliases after configuration changes and host reboots.
+It mounts the registry read-only, has no cloud/plugin state or TLS keys, and
+records only the aliases it owns so disabled or changed endpoints can be
+removed safely. A one-shot reconciliation command remains available.
 
 Only `data/proxy/export/bambu-cloud-lan-proxy-ca.crt` is intended for export.
 It is a public certificate, not a private key.

@@ -153,6 +153,36 @@ async fn overview(
         .into_iter()
         .filter_map(|v| Some((v.get("serial")?.as_str()?.to_ascii_uppercase(), v)))
         .collect();
+    let endpoint_snapshot: Value = fs::read(env_value(
+        "CLOUD_LAN_PROXY_ENDPOINT_STATUS_FILE",
+        "/endpoint-state/status.json",
+    ))
+    .ok()
+    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    .unwrap_or(Value::Null);
+    let endpoint_snapshot_fresh = endpoint_snapshot
+        .get("updated_at")
+        .and_then(Value::as_u64)
+        .is_some_and(|updated| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_sub(updated)
+                <= 30
+        });
+    let endpoint_runtime: HashMap<String, Value> = endpoint_snapshot
+        .get("endpoints")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| {
+            Some((
+                value.get("serial")?.as_str()?.to_ascii_uppercase(),
+                value.clone(),
+            ))
+        })
+        .collect();
     let printers = state.session.printers.read().await;
     let mut values = Vec::with_capacity(printers.len());
     for (serial, printer) in printers.iter() {
@@ -162,15 +192,44 @@ async fn overview(
             .and_then(|value| value.get("machine_model"))
             .and_then(Value::as_str)
             .unwrap_or("");
+        let endpoint_enabled = entry
+            .and_then(|value| value.get("endpoint_enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let virtual_ip = entry
+            .and_then(|value| value.get("virtual_ip"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let runtime = endpoint_runtime.get(serial);
+        let runtime_healthy = runtime.is_some_and(|value| {
+            value.get("process_running").and_then(Value::as_bool) == Some(true)
+                && value.get("mqtt").and_then(Value::as_bool) == Some(true)
+                && value.get("ftps").and_then(Value::as_bool) == Some(true)
+                && value.get("files").and_then(Value::as_bool) == Some(true)
+                && value.get("camera").and_then(Value::as_bool) != Some(false)
+        });
+        let endpoint_state = if !endpoint_enabled || virtual_ip.is_empty() {
+            "disabled"
+        } else if endpoint_snapshot_fresh && runtime_healthy {
+            "healthy"
+        } else if endpoint_snapshot_fresh && runtime.is_some() {
+            "degraded"
+        } else {
+            "unavailable"
+        };
         values.push(json!({
             "serial": serial,
             "name": entry.and_then(|v|v.get("name")).and_then(Value::as_str).unwrap_or(""),
             "model": model,
             "capabilities": PrinterCapabilities::from_model(model),
-            "virtual_ip": entry.and_then(|v|v.get("virtual_ip")).and_then(Value::as_str).unwrap_or(""),
+            "virtual_ip": virtual_ip,
             "physical_ip": entry.and_then(|v|v.get("ip")).and_then(Value::as_str).unwrap_or(""),
             "physical_access_configured": entry.and_then(|v|v.get("access_code")).and_then(Value::as_str).is_some_and(|v|!v.is_empty()),
-            "endpoint_enabled": entry.and_then(|v|v.get("endpoint_enabled")).and_then(Value::as_bool).unwrap_or(true),
+            "endpoint_enabled": endpoint_enabled,
+            "endpoint_health": {
+                "state": endpoint_state,
+                "services": runtime.cloned().unwrap_or(Value::Null),
+            },
             "online": status.online,
             "state": status.state,
             "secure_control": status.secure_control,

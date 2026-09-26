@@ -470,7 +470,17 @@ pub async fn run() -> Result<()> {
     let mut config = ProxyConfig::from_env()?;
     crate::web::apply_saved_settings(&data, &mut config)?;
     let session = Session::start(data, region, config).await?;
-    let result = crate::web::serve(session.clone()).await;
+    let result = tokio::select! {
+        result = crate::web::serve(session.clone()) => result,
+        result = async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                if let Some(failure) = session.host.failure().await {
+                    bail!("native plugin adapter failed: {failure}")
+                }
+            }
+        } => result,
+    };
     session.host.stop().await;
     result
 }

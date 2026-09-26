@@ -11,12 +11,14 @@ services:
       PROXY_RUNTIME_UID: ${PUID:-1000}
       PROXY_RUNTIME_GID: ${PGID:-1000}
       PROXY_PRINTER_REGISTRY: /registry/printers.json
+      PROXY_ENDPOINT_STATE_DIR: /endpoint-state
     volumes:
       - ./data/proxy:/data
       - ./data/staging:/staging
       - ./data/remote-cache:/remote-cache
       - ./data/camera:/camera-state
       - ./data/local-status:/local-status
+      - ./data/endpoint-state:/endpoint-state
       - ./data/gateway:/registry:ro
     restart: "no"
 
@@ -314,12 +316,14 @@ services:
       CLOUD_LAN_PROXY_STORAGE_ALLOW_UPLOAD: ${PROXY_STORAGE_ALLOW_UPLOAD:-false}
       CLOUD_LAN_PROXY_STORAGE_ALLOW_DELETE: ${PROXY_STORAGE_ALLOW_DELETE:-false}
       CLOUD_LAN_PROXY_LOCAL_STATUS_STATE_DIR: /local-status
+      CLOUD_LAN_PROXY_ENDPOINT_STATUS_FILE: /endpoint-state/status.json
     volumes:
       - ./data/gateway:/data
       - ./data/proxy/export:/proxy-ca:ro
       - ./data/staging:/staging:ro
       - ./data/remote-cache:/remote-cache
       - ./data/local-status:/local-status:ro
+      - ./data/endpoint-state:/endpoint-state:ro
     restart: unless-stopped
     stop_grace_period: 30s
     read_only: true
@@ -355,7 +359,7 @@ services:
       mqtt:
         condition: service_healthy
       endpoint-addresses:
-        condition: service_completed_successfully
+        condition: service_healthy
     network_mode: host
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
@@ -370,6 +374,7 @@ services:
       ENDPOINT_CAMERA_STATE_DIR: /camera-state
       ENDPOINT_LOCAL_STATUS_DIR: /local-status
       ENDPOINT_LOCAL_STATUS: ${PROXY_LOCAL_STATUS_ENABLED:-true}
+      ENDPOINT_STATUS_FILE: /endpoint-state/status.json
       DISCOVERY_TARGET: ${PROXY_DISCOVERY_TARGET:-255.255.255.255}
       FTPS_MAX_UPLOAD_MB: ${PROXY_FTPS_MAX_UPLOAD_MB:-1024}
       FTPS_MAX_TOTAL_MB: ${PROXY_FTPS_MAX_TOTAL_MB:-10240}
@@ -382,6 +387,7 @@ services:
       - ./data/remote-cache:/remote-cache
       - ./data/camera:/camera-state
       - ./data/local-status:/local-status
+      - ./data/endpoint-state:/endpoint-state
     restart: unless-stopped
     stop_grace_period: 30s
     read_only: true
@@ -393,6 +399,12 @@ services:
       - NET_BIND_SERVICE
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "bambu-cloud-lan-proxy", "endpoint-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   endpoint-addresses:
     image: bambu-cloud-lan-proxy:${PROXY_VERSION:-dev}
@@ -405,13 +417,22 @@ services:
     environment:
       ENDPOINT_REGISTRY: /data/printers.json
       ENDPOINT_INTERFACE: ${PROXY_ENDPOINT_INTERFACE:-}
+      ENDPOINT_ADDRESS_STATE: /address-state/managed.json
       LOG_LEVEL: ${PROXY_LOG_LEVEL:-INFO}
-    command: ["endpoint-addresses"]
+    command: ["endpoint-address-manager"]
     volumes:
       - ./data/gateway:/data:ro
+      - ./data/address-state:/address-state
+    restart: unless-stopped
     cap_drop:
       - ALL
     cap_add:
       - NET_ADMIN
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "bambu-cloud-lan-proxy", "endpoint-addresses-check"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

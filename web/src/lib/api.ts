@@ -7,6 +7,16 @@ export interface Printer {
   physical_access_configured: boolean;
   physical_access_code: string;
   endpoint_enabled: boolean;
+  endpoint_health: {
+    state: "disabled" | "healthy" | "degraded" | "unavailable";
+    services: null | {
+      process_running: boolean;
+      mqtt: boolean;
+      ftps: boolean;
+      files: boolean;
+      camera: boolean | null;
+    };
+  };
   online: boolean;
   state: string;
   secure_control: boolean;
