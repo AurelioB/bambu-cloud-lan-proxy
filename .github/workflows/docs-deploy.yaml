@@ -1,0 +1,49 @@
+name: Publish documentation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: documentation-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - uses: actions/configure-pages@v5
+      - name: Require an explicit publication URL
+        env:
+          SITE_URL: ${{ vars.DOCS_SITE_URL }}
+          SITE_BASE: ${{ vars.DOCS_BASE_PATH }}
+        run: test -n "$SITE_URL" && test -n "$SITE_BASE"
+      - run: npm ci
+        working-directory: website
+      - run: npm run check && npm run build
+        working-directory: website
+        env:
+          SITE_URL: ${{ vars.DOCS_SITE_URL }}
+          SITE_BASE: ${{ vars.DOCS_BASE_PATH }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

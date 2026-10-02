@@ -1,0 +1,19 @@
+# Documentation image must never receive printer/account state.
+**
+!website/
+!website/**
+!docs/
+!docs/admin-authentication.md
+!examples/
+!examples/**
+!src/
+!src/web.rs
+!src/admin_auth.rs
+website/node_modules/
+website/dist/
+website/.astro/
+website/test-results/
+website/playwright-report/
+**/.env
+**/.env.local
+**/.secrets/

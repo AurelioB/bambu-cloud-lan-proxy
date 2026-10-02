@@ -1,0 +1,26 @@
+[Unit]
+Description=Bambu Cloud LAN Proxy — addresses
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bambu-proxy
+Group=bambu-proxy
+EnvironmentFile=/etc/bambu-proxy/environment
+ExecStart=/usr/local/bin/bambu-cloud-lan-proxy endpoint-address-manager
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/bambu-proxy
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

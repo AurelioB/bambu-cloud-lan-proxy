@@ -1,0 +1,53 @@
+@import '@fontsource-variable/inter';
+
+:root {
+  --sl-font: 'Inter Variable', sans-serif;
+  --sl-color-accent-low: #14392d;
+  --sl-color-accent: #6cb998;
+  --sl-color-accent-high: #b8e9d1;
+  --sl-color-black: #121b17;
+  --sl-color-gray-6: #1b2720;
+  --sl-color-gray-5: #314239;
+  --sl-content-width: 49rem;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #e3eee6;
+  --sl-color-accent: #256045;
+  --sl-color-accent-high: #163d2c;
+  --sl-color-white: #1b2a21;
+  --sl-color-gray-1: #28392d;
+  --sl-color-gray-2: #3d4d42;
+  --sl-color-gray-3: #58675c;
+  --sl-color-gray-4: #88958b;
+  --sl-color-gray-5: #d4ddd4;
+  --sl-color-gray-6: #eff2eb;
+  --sl-color-gray-7: #f6f7f2;
+  --sl-color-black: #fafbf6;
+}
+.site-title {
+  letter-spacing: -0.045em;
+  font-weight: 650;
+  font-size: 1.1rem;
+}
+h1,
+h2,
+h3 {
+  letter-spacing: -0.035em;
+}
+.sl-markdown-content table {
+  font-size: 0.875rem;
+}
+.sl-markdown-content a {
+  text-underline-offset: 0.2em;
+}
+.expressive-code {
+  margin-block: 1.5rem;
+}
+html {
+  scroll-padding-top: 6rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}

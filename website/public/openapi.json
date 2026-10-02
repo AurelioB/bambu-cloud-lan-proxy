@@ -1,0 +1,1368 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Bambu Cloud LAN Proxy HTTP API",
+    "version": "0.6.0+admin-auth",
+    "description": "Current-source reference, not a guarantee for the original v0.6.0 release. Printer protocols are separate. Session writes require Origin and CSRF. Service key cannot bypass local/OIDC admin authentication."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:4844",
+      "description": "Default loopback origin; replace with your own admin origin."
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Minimal liveness",
+        "operationId": "get_api_health",
+        "description": "",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "ok",
+                      "type": "string"
+                    }
+                  },
+                  "required": ["status"]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/session": {
+      "get": {
+        "summary": "Session and available sign-in choices",
+        "operationId": "get_api_auth_session",
+        "description": "",
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "Sign in with proxy code or local credentials",
+        "operationId": "post_api_auth_login",
+        "description": "Sets an HttpOnly session cookie. Mode controls accepted credentials. JSON limit 16 KiB.",
+        "security": [],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact configured admin origin; supplied by browsers."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Login"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "summary": "Revoke the browser session",
+        "operationId": "post_api_auth_logout",
+        "description": "Requires CSRF when a valid session is present. Does not sign out the Bambu account.",
+        "security": [],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact configured admin origin; supplied by browsers."
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for session-authenticated mutations; not for direct service-key requests."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session revoked; cookies cleared"
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/oidc/start": {
+      "post": {
+        "summary": "Start admin OIDC",
+        "operationId": "post_api_auth_oidc_start",
+        "description": "Sets a separate browser-binding cookie. Navigate to the returned URL.",
+        "security": [],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact configured admin origin; supplied by browsers."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["url"]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/oidc/callback": {
+      "get": {
+        "summary": "Complete admin OIDC",
+        "operationId": "get_api_auth_oidc_callback",
+        "description": "Browser-binding cookie and single-use state required. Provider rejection may omit code.",
+        "security": [],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to / on success or /login?auth_error=oidc on failure",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/overview": {
+      "get": {
+        "summary": "Connection and printer overview",
+        "operationId": "get_api_admin_overview",
+        "description": "",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings": {
+      "get": {
+        "summary": "Read current settings",
+        "operationId": "get_api_admin_settings",
+        "description": "",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Replace saved settings",
+        "operationId": "put_api_admin_settings",
+        "description": "Origin and CSRF required with session authentication. All body fields required. Independent write permissions are not implied by mode.",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact configured admin origin; supplied by browsers."
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for session-authenticated mutations; not for direct service-key requests."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Settings"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/printers/{serial}/endpoint": {
+      "put": {
+        "summary": "Save printer endpoint configuration",
+        "operationId": "put_api_admin_printers__serial__endpoint",
+        "description": "Requires a discovered account printer. Refresh certificates separately after address changes.",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serial",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact configured admin origin; supplied by browsers."
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for session-authenticated mutations; not for direct service-key requests."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "certificate_refresh_required": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["ok", "certificate_refresh_required"]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Endpoint"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/ca": {
+      "get": {
+        "summary": "Download public proxy CA",
+        "operationId": "get_api_admin_ca",
+        "description": "",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public CA PEM attachment",
+            "content": {
+              "application/x-pem-file": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud/auth/status": {
+      "get": {
+        "summary": "Read Bambu account status",
+        "operationId": "get_api_cloud_auth_status",
+        "description": "",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud/auth/url": {
+      "get": {
+        "summary": "Get official Bambu sign-in URL",
+        "operationId": "get_api_cloud_auth_url",
+        "description": "",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["url"]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud/auth/paste": {
+      "post": {
+        "summary": "Complete Bambu account sign-in",
+        "operationId": "post_api_cloud_auth_paste",
+        "description": "Sensitive Bambu callback URL, not the admin OIDC callback.",
+        "security": [
+          {
+            "SecureSession": []
+          },
+          {
+            "LoopbackSession": []
+          },
+          {
+            "LegacyCode": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact configured admin origin; supplied by browsers."
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required for session-authenticated mutations; not for direct service-key requests."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["ok"]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "pasted_url": {
+                    "type": "string",
+                    "maxLength": 20000
+                  }
+                },
+                "required": ["pasted_url"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/cloud-lan-proxy/storage/capabilities": {
+      "get": {
+        "summary": "Worker storage capabilities",
+        "operationId": "get_internal_cloud_lan_proxy_storage_capabilities",
+        "description": "",
+        "security": [
+          {
+            "ServiceKey": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ability": {
+                      "type": "boolean"
+                    },
+                    "list": {
+                      "type": "boolean"
+                    },
+                    "download": {
+                      "type": "boolean"
+                    },
+                    "subfile": {
+                      "type": "boolean"
+                    },
+                    "upload": {
+                      "type": "boolean"
+                    },
+                    "delete": {
+                      "type": "boolean"
+                    },
+                    "notifications": {
+                      "const": "revision",
+                      "type": "string"
+                    },
+                    "time": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "ability",
+                    "list",
+                    "download",
+                    "subfile",
+                    "upload",
+                    "delete",
+                    "notifications",
+                    "time"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/cloud-lan-proxy/storage/{operation}": {
+      "post": {
+        "summary": "Perform a worker storage operation",
+        "operationId": "post_internal_cloud_lan_proxy_storage__operation_",
+        "description": "Internal shared-filesystem interface. Fields depend on operation; see prose reference. Download/subfile return cache_key and size, not bytes. Mutations are policy gated. No browser-cookie authorization.",
+        "security": [
+          {
+            "ServiceKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ability",
+                "list",
+                "download",
+                "subfile",
+                "upload",
+                "delete",
+                "discard"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Application error JSON; framework validation errors may use text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "SecureSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-bambu-session",
+        "description": "HTTPS session cookie."
+      },
+      "LoopbackSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "bambu-session",
+        "description": "Loopback HTTP development/default mode cookie."
+      },
+      "LegacyCode": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Cloud-Lan-Proxy-Key",
+        "description": "Only accepted for admin endpoints in access_code mode."
+      },
+      "ServiceKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Cloud-Lan-Proxy-Key",
+        "description": "Required for internal worker routes in all admin modes; never publish it."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": ["detail"]
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["read_only", "controls", "full_control"]
+          },
+          "allow_cancel": {
+            "type": "boolean"
+          },
+          "cloud_print_enabled": {
+            "type": "boolean"
+          },
+          "remote_reprint_enabled": {
+            "type": "boolean"
+          },
+          "advertise_controls": {
+            "type": "boolean"
+          },
+          "storage_allow_delete": {
+            "type": "boolean"
+          },
+          "storage_allow_upload": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "allow_cancel",
+          "cloud_print_enabled",
+          "remote_reprint_enabled",
+          "advertise_controls",
+          "storage_allow_delete",
+          "storage_allow_upload"
+        ]
+      },
+      "Endpoint": {
+        "type": "object",
+        "properties": {
+          "virtual_ip": {
+            "type": "string"
+          },
+          "physical_ip": {
+            "type": "string"
+          },
+          "physical_access_code": {
+            "type": "string",
+            "description": "Omit or leave empty to preserve the stored physical code. Otherwise eight ASCII letters/digits."
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": ["virtual_ip", "physical_ip", "enabled"]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "authenticated": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": ["string", "null"]
+          },
+          "csrf_token": {
+            "type": ["string", "null"]
+          },
+          "access_code": {
+            "type": "boolean"
+          },
+          "local": {
+            "type": "boolean"
+          },
+          "oidc": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "authenticated",
+          "username",
+          "csrf_token",
+          "access_code",
+          "local",
+          "oidc"
+        ]
+      },
+      "Login": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "access_code": {
+            "type": "string",
+            "format": "password"
+          }
+        },
+        "required": []
+      },
+      "LoginResult": {
+        "type": "object",
+        "properties": {
+          "authenticated": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": "string"
+          },
+          "csrf_token": {
+            "type": "string"
+          }
+        },
+        "required": ["authenticated", "username", "csrf_token"]
+      },
+      "CloudStatus": {
+        "type": "object",
+        "properties": {
+          "signed_in": {
+            "type": "boolean"
+          },
+          "cloud_connected": {
+            "type": "boolean"
+          },
+          "region": {
+            "type": "string"
+          }
+        },
+        "required": ["signed_in", "cloud_connected", "region"]
+      },
+      "Capabilities": {
+        "type": "object",
+        "properties": {
+          "camera": {
+            "type": "string",
+            "enum": ["rtsps", "image", "unknown"]
+          },
+          "local_camera_bridge": {
+            "type": "boolean"
+          },
+          "chamber_temperature": {
+            "type": "boolean"
+          },
+          "dual_nozzle": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["model_profile", "runtime_telemetry", "unknown"]
+          },
+          "model_known": { "type": "boolean" },
+          "observed_fields": {
+            "type": "array",
+            "items": { "type": "string" },
+            "uniqueItems": true
+          },
+          "runtime": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/ObservedCapabilities" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": [
+          "camera",
+          "local_camera_bridge",
+          "chamber_temperature",
+          "dual_nozzle",
+          "source",
+          "model_known",
+          "observed_fields",
+          "runtime"
+        ]
+      },
+      "ObservedCapabilities": {
+        "type": "object",
+        "description": "Sanitized runtime evidence; firmware functions do not grant proxy permissions. Unknown counts are null; observed absence is zero.",
+        "properties": {
+          "updated_at": { "type": "integer", "minimum": 0 },
+          "firmware": { "type": ["string", "null"] },
+          "ams_units": { "type": ["integer", "null"], "minimum": 0 },
+          "filament_slots": { "type": ["integer", "null"], "minimum": 0 },
+          "ams": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true
+            }
+          },
+          "sensors": {
+            "type": "array",
+            "items": { "type": "string" },
+            "uniqueItems": true
+          },
+          "firmware_controls": {
+            "type": "object",
+            "additionalProperties": { "type": "boolean" }
+          },
+          "dual_nozzle": { "type": ["boolean", "null"] },
+          "chamber_temperature": { "type": ["boolean", "null"] }
+        },
+        "required": [
+          "updated_at",
+          "firmware",
+          "ams_units",
+          "filament_slots",
+          "ams",
+          "sensors",
+          "firmware_controls",
+          "dual_nozzle",
+          "chamber_temperature"
+        ]
+      },
+      "Printer": {
+        "type": "object",
+        "properties": {
+          "serial": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "virtual_ip": {
+            "type": "string"
+          },
+          "physical_ip": {
+            "type": "string"
+          },
+          "physical_access_configured": {
+            "type": "boolean"
+          },
+          "endpoint_enabled": {
+            "type": "boolean"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string"
+          },
+          "secure_control": {
+            "type": "boolean"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          },
+          "endpoint_health": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": ["disabled", "healthy", "degraded", "unavailable"]
+              },
+              "services": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "serial": {
+                        "type": "string"
+                      },
+                      "virtual_ip": {
+                        "type": "string"
+                      },
+                      "process_running": {
+                        "type": "boolean"
+                      },
+                      "mqtt": {
+                        "type": "boolean"
+                      },
+                      "ftps": {
+                        "type": "boolean"
+                      },
+                      "files": {
+                        "type": "boolean"
+                      },
+                      "camera": {
+                        "type": ["boolean", "null"]
+                      }
+                    },
+                    "required": [
+                      "serial",
+                      "virtual_ip",
+                      "process_running",
+                      "mqtt",
+                      "ftps",
+                      "files",
+                      "camera"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": ["state", "services"]
+          }
+        },
+        "required": [
+          "serial",
+          "name",
+          "model",
+          "virtual_ip",
+          "physical_ip",
+          "physical_access_configured",
+          "endpoint_enabled",
+          "online",
+          "state",
+          "secure_control",
+          "capabilities",
+          "endpoint_health"
+        ]
+      },
+      "Overview": {
+        "type": "object",
+        "properties": {
+          "healthy": {
+            "type": "boolean"
+          },
+          "signed_in": {
+            "type": "boolean"
+          },
+          "cloud_connected": {
+            "type": "boolean"
+          },
+          "region": {
+            "type": "string"
+          },
+          "printers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Printer"
+            }
+          }
+        },
+        "required": [
+          "healthy",
+          "signed_in",
+          "cloud_connected",
+          "region",
+          "printers"
+        ]
+      },
+      "StorageRequest": {
+        "type": "object",
+        "properties": {
+          "serial": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "storage": {
+            "type": "string"
+          },
+          "api_version": {
+            "type": "integer",
+            "default": 2
+          },
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "request": {},
+          "cache_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9]{32}$"
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=Bambu Cloud LAN Proxy — broker
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bambu-proxy
+Group=bambu-proxy
+ExecStart=/usr/sbin/mosquitto -c /etc/bambu-proxy/mosquitto.conf
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/bambu-proxy
+AmbientCapabilities=
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
