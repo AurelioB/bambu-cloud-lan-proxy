@@ -13,7 +13,9 @@ The independent public site in [`website/`](website/README.md) includes a landin
 - [Standalone Linux installation](website/src/content/docs/docs/install/standalone.md), with [systemd/configuration examples](examples/standalone/).
 - [Features](website/src/content/docs/docs/features.md), [compatibility](website/src/content/docs/docs/compatibility.md), [HTTP API](website/src/content/docs/docs/api.md), and [operations](website/src/content/docs/docs/operations.md).
 
-The guides describe the current source tree, including features added after the original v0.6.0 release. They do not assume a public container image or prebuilt native binary. Static-site publication is opt-in; see the website README. The repository must be accessible to a reader before clone instructions can work.
+The guides describe the current source tree, including features added after the original v0.6.0 release. The v0.7.0 candidate adds automated native/Compose/source packaging, but no public artifact is assumed until publication and anonymous access are verified. See [release readiness](docs/release-readiness.md) and [changes](CHANGELOG.md). Static-site publication is opt-in; the repository must be accessible to a reader before clone instructions can work.
+
+The application backend migration to Rust is complete. The isolated C++ adapter retains Bambu's C++ ABI and BambuSource media/storage calls; shell scripts handle installation and checks. Mosquitto and MediaMTX are external infrastructure. There is no Gateway or Python backend runtime.
 
 ## What it exposes
 
@@ -32,13 +34,22 @@ Control and print writes use Bambu Cloud and the official plugin's device certif
 ## Requirements
 
 - Linux x86-64. The reviewed Bambu plugin build is x86-64 ELF.
-- Docker Engine with Compose v2.
+- Docker Engine with Compose v2; prebuilt release bundles require Compose 2.24.4+.
 - The printer and proxy host on a trusted private network.
 - For camera/local telemetry: the printer's LAN-only liveview enabled, its LAN IP, and its eight-character access code. The printer itself can remain cloud-paired; do not enable printer LAN-only mode.
 
 Do not publish ports `322`, `990`, `6000`, `8883`, the passive FTPS range, or the admin console to the internet.
 
 ## Install
+
+The instructions below build from source. Once a reviewed release is published,
+its Compose bundle can use prebuilt images without installing Rust/Node/C++
+toolchains: verify `SHA256SUMS`, extract the `*-compose.tar.gz` archive, edit
+the generated `.env` after `./scripts/init.sh`, then run `./scripts/deploy.sh`.
+Its `release.env` selects versioned images and `scripts/compose.sh` applies the
+build-free override. Use that wrapper for subsequent Compose operations. The
+native bundle and its runtime requirements are described in
+[standalone binary installation](docs/standalone-binary.md).
 
 ```sh
 git clone https://github.com/AurelioB/bambu-cloud-lan-proxy.git

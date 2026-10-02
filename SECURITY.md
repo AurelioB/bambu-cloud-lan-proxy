@@ -2,7 +2,7 @@
 
 This proxy joins two trust domains: a Bambu Cloud account and a local MQTT
 client. Keep its listeners on trusted interfaces and never publish ports 322,
-4844, 8883, 990, or 50000-50009 to the public internet.
+4844, 8883, 990, 6000, or 50000-50009 to the public internet.
 
 The default policy is `read_only`. In that mode, only four explicit query
 commands reach the cloud plugin. `controls` adds pause, resume, speed, and
@@ -49,3 +49,14 @@ It is a public certificate, not a private key.
 
 To report a vulnerability, use GitHub's private security advisory feature for
 this repository rather than opening a public issue.
+
+Admin local/OIDC authentication protects the UI and HTTP APIs independently of
+the shared device code. The internal file API still authenticates endpoint
+workers with the device code; a browser session does not grant internal-service
+access. Remote administration needs HTTPS and a trusted reverse proxy/VPN.
+
+CI scans full Git history for secrets and audits npm/Rust dependencies. The
+single allowed key is the exact public loopback OIDC test fixture, not any key
+in a tests directory. Reviewed advisory exceptions and the remaining archived
+PEM-parser warning are documented in `docs/dependency-security.md`; passing
+these checks is not a claim of a complete security audit.

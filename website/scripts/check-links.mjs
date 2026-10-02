@@ -45,6 +45,10 @@ for (const file of pages) {
 
 // Route/method drift checks keep the reference tied to the real routers.
 const spec = JSON.parse(await readFile('public/openapi.json', 'utf8'));
+const cargoVersion = (await readFile('../Cargo.toml', 'utf8')).match(
+  /^version = "([^"]+)"$/m,
+)?.[1];
+assert.equal(spec.info.version, cargoVersion, 'OpenAPI version must match Cargo');
 const routes = new Map();
 for (const sourceFile of ['../src/web.rs', '../src/admin_auth.rs']) {
   const source = (await readFile(sourceFile, 'utf8')).replaceAll(

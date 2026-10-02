@@ -2,6 +2,10 @@
 title: Install with Docker Compose
 description: Recommended installation on a Linux x86-64 Docker host.
 ---
+This guide builds from source. For a published release with accessible prebuilt
+images, use [the release bundle instructions](/docs/releases/) instead; that path
+does not require compiling the application and uses `scripts/compose.sh`.
+
 Compose coordinates the broker, cloud core, endpoint processes, address manager, and certificate bootstrap. It builds images from source; no published container image is required.
 
 ## 1. Get the source

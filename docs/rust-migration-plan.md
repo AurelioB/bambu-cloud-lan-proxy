@@ -1,10 +1,11 @@
 # Full Rust migration plan
 
-Status: implementation and supervised cutover are complete on
-`migration/full-rust`. The Rust stack is the active deployment. The remaining
-release gates are the operator-observed Handy/Studio check and a deliberately
-selected physical print/cancel test; those cannot be inferred from service
-health or performed with an arbitrary fixture.
+Status: implementation and supervised cutover were completed and merged to
+`main` for v0.6.0. The Rust stack is the active deployment. Handy, Studio,
+Bambuddy, and the supervised print/cancel test passed; see
+`release-validation-v0.6.0.md`. A physical host reboot remains optional.
+New admin/camera/capability features belong to the unpublished v0.7.0 candidate;
+see `release-readiness.md` for its separate release and deployment gates.
 
 ## Target architecture
 
@@ -31,7 +32,8 @@ health or performed with an arbitrary fixture.
 3. Ported implicit FTPS, port-6000 native files, SSDP discovery, local telemetry,
    certificate-pinned camera relay, and generic TCP relay.
 4. Built the Svelte/shadcn-svelte admin application for setup, health, devices,
-   policy gates, account sign-in, and public proxy-CA export.
+   policy gates, account sign-in, and export of the public proxy CA. The v0.7.0
+   admin API authenticates that export; only the certificate itself is public.
 5. Replaced Python images and Compose entrypoints, deleted Python runtime source,
    and updated bootstrap, CI, documentation, attribution, and operator tooling.
 6. Deployed the production image, migrated the live stack, verified Bambuddy,

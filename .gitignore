@@ -21,6 +21,9 @@ website/src/content/docs/docs/authentication.md
 website/public/examples/
 .secrets/
 compose.override.yaml
+release.env
+release-artifacts/
+published-artifacts/
 dist/
 build/
 *.egg-info/

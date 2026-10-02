@@ -1,0 +1,12 @@
+title = "Bambu proxy secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public, test-only Ed25519 signing key for the loopback OIDC provider"
+targetRules = ["private-key"]
+condition = "AND"
+paths = ['''^src/admin_auth/tests\.rs$''']
+regexTarget = "match"
+regexes = ['''MC4CAQAwBQYDK2VwBCIEIAYdrYUdG6UqUk80YvIP\+afHPEl/Yl503o/d\+imf5BS/''']

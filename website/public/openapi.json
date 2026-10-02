@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Bambu Cloud LAN Proxy HTTP API",
-    "version": "0.6.0+admin-auth",
+    "version": "0.7.0",
     "description": "Current-source reference, not a guarantee for the original v0.6.0 release. Printer protocols are separate. Session writes require Origin and CSRF. Service key cannot bypass local/OIDC admin authentication."
   },
   "servers": [

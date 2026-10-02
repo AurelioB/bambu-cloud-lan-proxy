@@ -6,6 +6,9 @@ This is the advanced **Linux x86-64, systemd, source-build** path. It runs the s
 
 The supplied configuration targets Debian/Ubuntu-style paths. Review it for your distribution. These instructions are not a prebuilt binary installer.
 
+When a reviewed binary release is available, [the prebuilt installation guide](/docs/releases/)
+lets you skip the source-build step and use the bundled executables/MediaMTX.
+
 ## 1. Build the application
 
 Install Rust 1.96 (the CI toolchain), Node.js 24 with npm, and native build tools. On a suitable Debian/Ubuntu host:

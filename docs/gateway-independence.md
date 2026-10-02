@@ -87,7 +87,8 @@ Native plugin crash isolation and the bounded RPC contract remain unchanged.
 ## Cutover checklist
 
 Do not run both cloud supervisors against the same live data directory.
-The rewrite has not been automatically deployed to the printer environment.
+The v0.6.0 rewrite was deployed and validated under supervision; see
+`release-validation-v0.6.0.md`. This checklist still applies to future cutovers.
 
 1. Run unit, native-RPC and image-build checks without printer/network access.
 2. Back up existing private data; test old session import and fresh browser

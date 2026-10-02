@@ -35,4 +35,4 @@ See [features and data paths](/docs/features/) and the [API reference](/docs/api
 
 These docs describe the current source tree, including admin authentication added after the original v0.6.0 release. Do not assume an older release contains every documented feature. Install from a reviewed revision containing the documentation and record that revision for upgrades.
 
-The repository must be accessible to you to clone it. No public container registry or prebuilt native release asset is assumed by these instructions.
+The repository must be accessible to you to clone it. No public container registry or prebuilt native release asset is assumed by the source-build instructions. [Releases & prebuilt installation](/docs/releases/) describes the candidate's packaging and how to install published artifacts once available.

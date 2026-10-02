@@ -75,6 +75,7 @@ export default defineConfig({
         {
           label: 'Installation',
           items: [
+            { label: 'Releases & prebuilt installation', slug: 'docs/releases' },
             {
               label: 'Docker Compose · recommended',
               slug: 'docs/install/compose',

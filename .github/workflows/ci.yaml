@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -41,5 +42,14 @@ jobs:
       - run: cp .env.example .env
       - run: sed -i 's/PROXY_ACCESS_CODE=CHANGE_ME/PROXY_ACCESS_CODE=TEST1234/' .env
       - run: docker compose config --quiet
-      - run: docker build -f Dockerfile.proxy -t bambu-cloud-lan-proxy:test .
+      - run: docker build -f Dockerfile.proxy --build-arg PROXY_VERSION=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -1) --build-arg PROXY_REVISION="$GITHUB_SHA" -t bambu-cloud-lan-proxy:test .
       - run: docker run --rm --network none bambu-cloud-lan-proxy:test --version
+      - name: Validate release bundles
+        run: |
+          ./scripts/package-release.sh bambu-cloud-lan-proxy:test "ghcr.io/${GITHUB_REPOSITORY,,}" release-artifacts
+          ./tests/release-bundles.sh release-artifacts bambu-cloud-lan-proxy:test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: release-artifacts/
+          retention-days: 14

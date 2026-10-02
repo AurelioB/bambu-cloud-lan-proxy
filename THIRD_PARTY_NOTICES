@@ -34,3 +34,16 @@ endorsement of this proxy by Bambu Lab.
 nlohmann/json is installed from Debian's package repository when building
 the native adapter. Its MIT license is available with that package and at
 https://github.com/nlohmann/json/blob/develop/LICENSE.MIT
+
+MediaMTX v1.20.1 is copied from its reviewed container image into the proxy
+runtime and native release bundle. MIT License, Copyright (c) 2019 aler9.
+The MIT permission grant, notice-retention requirement, warranty disclaimer,
+and liability disclaimer reproduced above also apply to this component.
+Upstream license: https://github.com/bluenviron/mediamtx/blob/v1.20.1/LICENSE
+
+Mosquitto is external broker infrastructure. Its upstream distribution and
+the derived broker image retain their own Eclipse Public License 2.0 / Eclipse
+Distribution License 1.0 notices. See https://mosquitto.org/license/ .
+Base-image system packages retain their installed Debian/Alpine license notices.
+Release SPDX inventories describe packaged dependencies, not a relicensing of
+third-party software as this project's MIT source.

@@ -79,9 +79,14 @@ You can also serve the output from any static web host. A container example for 
 ## Release checklist
 
 - Source revision and docs agree; newly documented auth features exist in that revision.
-- Linux x86-64 requirements and unsupported camera types are visible.
+- Linux x86-64 requirements and unverified camera hardware are visible.
 - Compose example validates; source builds and tests pass.
 - Links, search, keyboard navigation, mobile layout, and light/dark appearance work.
 - A fresh-host smoke test is recorded for each deployment method advertised as validated.
 - Public images and examples contain only demo data.
 - No public image registry or downloadable binary is advertised unless that artifact actually exists.
+
+See [releases and prebuilt installation](/docs/releases/) for the manual packaging
+workflow, candidate artifacts, and owner-controlled publication steps. Rust
+advisory exceptions must be reviewed when the affected dependencies or crypto
+paths change; do not remove audit checks merely to make a release green.
