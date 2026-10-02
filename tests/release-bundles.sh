@@ -15,6 +15,8 @@ done
 tar -xzf "$artifacts/bambu-cloud-lan-proxy-$version-linux-x86_64.tar.gz" -C "$unpack_dir"
 tar -xzf "$artifacts/bambu-cloud-lan-proxy-$version-compose.tar.gz" -C "$unpack_dir"
 native_dir=$unpack_dir/bambu-cloud-lan-proxy-$version-linux-x86_64
+test -n "$(find "$native_dir/licenses/npm" -path '*fontsource*inter*/LICENSE' -print -quit)"
+test -s "$native_dir/licenses/rust/Cargo.lock"
 test "$(docker run --rm --network none --entrypoint /bundle/bin/bambu-cloud-lan-proxy \
   -v "$native_dir:/bundle:ro" "$image" --version)" = "bambu-cloud-lan-proxy $version"
 printf '%s\n' '{"id":1,"method":"echo","params":{"offline":true}}' \

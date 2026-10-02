@@ -47,3 +47,10 @@ Distribution License 1.0 notices. See https://mosquitto.org/license/ .
 Base-image system packages retain their installed Debian/Alpine license notices.
 Release SPDX inventories describe packaged dependencies, not a relicensing of
 third-party software as this project's MIT source.
+
+The application image and native bundle preserve installed Rust and npm
+dependency license/notice files under /usr/share/licenses/rust and
+/usr/share/licenses/npm (licenses/rust and licenses/npm in the native archive).
+This includes the Inter font's SIL Open Font License. npm inventory.json and
+the Rust Cargo.lock record component versions; missing upstream notice files
+and proprietary-plugin terms still require maintainer review.
