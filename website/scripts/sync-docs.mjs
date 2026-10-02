@@ -1,5 +1,11 @@
 import { mkdir, readFile, writeFile, cp } from 'node:fs/promises';
 
+// The deployed font files must retain their SIL Open Font License notice.
+await cp(
+  new URL('../node_modules/@fontsource-variable/inter/LICENSE', import.meta.url),
+  new URL('../public/inter-font-LICENSE.txt', import.meta.url),
+);
+
 // One canonical authentication guide: never maintain two security contracts.
 const source = await readFile(
   new URL('../../docs/admin-authentication.md', import.meta.url),

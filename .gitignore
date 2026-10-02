@@ -19,6 +19,7 @@ website/test-results/
 website/playwright-report/
 website/src/content/docs/docs/authentication.md
 website/public/examples/
+website/public/inter-font-LICENSE.txt
 .secrets/
 compose.override.yaml
 release.env
