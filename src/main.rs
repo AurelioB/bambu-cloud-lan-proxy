@@ -8,6 +8,7 @@ mod config;
 mod discovery;
 mod endpoint;
 mod ftps;
+mod image_camera;
 mod local_status;
 mod native_files;
 mod plugin_install;

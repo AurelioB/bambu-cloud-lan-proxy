@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
 use crate::{
-    capabilities::PrinterCapabilities,
+    capabilities::{ObservedCapabilities, PrinterCapabilities, TELEMETRY_MAX_AGE},
     cloud_auth,
     config::{ProxyMode, env_bool, env_value},
     service::Session,
@@ -192,6 +192,30 @@ async fn overview(
             .and_then(|value| value.get("machine_model"))
             .and_then(Value::as_str)
             .unwrap_or("");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut observed = printer.observed_capabilities().await;
+        if !observed.fresh(now, TELEMETRY_MAX_AGE) {
+            observed = ObservedCapabilities::default();
+        }
+        let local_dir = PathBuf::from(env_value(
+            "CLOUD_LAN_PROXY_LOCAL_STATUS_STATE_DIR",
+            "/local-status",
+        ));
+        let local: Option<ObservedCapabilities> =
+            fs::read(local_dir.join(format!("{serial}.capabilities.json")))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let local_max_age = env_value("CLOUD_LAN_PROXY_LOCAL_STATUS_FRESH_SECONDS", "20")
+            .parse::<f64>()
+            .unwrap_or(20.0) as u64;
+        if let Some(local) = local.filter(|local| local.fresh(now, local_max_age)) {
+            observed.prefer(&local);
+        }
+        let capabilities =
+            PrinterCapabilities::with_observations(model, &observed, now, TELEMETRY_MAX_AGE);
         let endpoint_enabled = entry
             .and_then(|value| value.get("endpoint_enabled"))
             .and_then(Value::as_bool)
@@ -221,7 +245,7 @@ async fn overview(
             "serial": serial,
             "name": entry.and_then(|v|v.get("name")).and_then(Value::as_str).unwrap_or(""),
             "model": model,
-            "capabilities": PrinterCapabilities::from_model(model),
+            "capabilities": capabilities,
             "virtual_ip": virtual_ip,
             "physical_ip": entry.and_then(|v|v.get("ip")).and_then(Value::as_str).unwrap_or(""),
             "physical_access_configured": entry.and_then(|v|v.get("access_code")).and_then(Value::as_str).is_some_and(|v|!v.is_empty()),

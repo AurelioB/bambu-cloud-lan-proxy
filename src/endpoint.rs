@@ -15,7 +15,7 @@ use tokio::{
 };
 
 use crate::{
-    capabilities::PrinterCapabilities,
+    capabilities::{CameraKind, PrinterCapabilities},
     config::{env_bool, env_value},
 };
 
@@ -272,6 +272,22 @@ pub async fn run_endpoint() -> Result<()> {
     environment.extend([
         ("NATIVE_FILES_BIND_HOST", virtual_ip.clone()),
         ("NATIVE_FILES_PORT", "6000".into()),
+        (
+            "IMAGE_CAMERA_ENABLED",
+            (PrinterCapabilities::from_model(&model).camera == CameraKind::Image
+                && !physical_ip.is_empty()
+                && env_bool("ENDPOINT_PHYSICAL_ACCESS_CONFIGURED", false)?)
+            .to_string(),
+        ),
+        ("IMAGE_CAMERA_UPSTREAM_IP", physical_ip.clone()),
+        (
+            "IMAGE_CAMERA_REGISTRY",
+            env_value("ENDPOINT_REGISTRY", "/data/printers.json"),
+        ),
+        (
+            "IMAGE_CAMERA_STATE_DIR",
+            env_value("ENDPOINT_CAMERA_STATE_DIR", "/camera-state"),
+        ),
     ]);
     children.push(child("native-files", &environment)?);
 
@@ -288,7 +304,7 @@ pub async fn run_endpoint() -> Result<()> {
     children.push(child("discovery", &environment)?);
 
     if !physical_ip.is_empty() && env_bool("ENDPOINT_PHYSICAL_ACCESS_CONFIGURED", false)? {
-        if PrinterCapabilities::from_model(&model).local_camera_bridge {
+        if PrinterCapabilities::from_model(&model).camera == CameraKind::Rtsps {
             let mut environment = common.clone();
             environment.extend([
                 (
@@ -307,7 +323,7 @@ pub async fn run_endpoint() -> Result<()> {
             ]);
             children.push(optional_child("camera", &environment)?);
         } else {
-            tracing::info!(%serial, %model, "RTSPS camera bridge is not available for this model profile");
+            tracing::info!(%serial, %model, "camera uses shared image/file listener or an unknown profile");
         }
 
         if env_bool("ENDPOINT_LOCAL_STATUS", true)? {
@@ -431,7 +447,14 @@ async fn write_manager_status(
             ftps: port_ready(address, 990).await,
             files: port_ready(address, 6000).await,
             camera: if camera_expected {
-                Some(port_ready(address, 322).await)
+                let port = if PrinterCapabilities::from_model(&endpoint.machine_model).camera
+                    == CameraKind::Image
+                {
+                    6000
+                } else {
+                    322
+                };
+                Some(port_ready(address, port).await)
             } else {
                 None
             },

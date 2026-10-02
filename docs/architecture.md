@@ -101,6 +101,34 @@ publish standard port 322 without giving MediaMTX root or low-port capability.
 The downstream side uses the proxy certificate and proxy access code. This
 path is local-only and cannot fall back to Bambu's proprietary cloud video.
 
+A1 / A1 mini / A2L / P1P / P1S cameras use the chamber-image protocol.
+The native-file worker owns virtual port 6000 and distinguishes the image
+login (`64`, `0x3000`, eight padding bytes) from the native-file login before
+reading either credential payload. Both authenticate with the proxy code.
+The image handler opens pinned local TLS to physical port 6000 using the
+physical access code. Its on-demand upstream connection fans out bounded,
+validated JPEG frames to viewers, reconnects while viewers remain, and closes
+when the last viewer leaves. It does not forward arbitrary camera-client commands.
+Unknown or disabled camera profiles fail closed while native files remain available.
+
+## Observed capabilities
+
+Cloud reports update per-printer capability evidence before LAN capability bits
+are rewritten. The read-only local MQTT worker separately projects sanitized
+evidence into `SERIAL.capabilities.json` in the shared local-status directory.
+The admin API prefers fresh local evidence (the configured local report window,
+20 seconds by default), fills absent fields from cloud evidence (90 seconds),
+then uses the conservative model profile. It never reads client-supplied virtual
+reports to learn physical capabilities.
+
+AMS existence bits remove detached legacy units; partial unit/tray reports
+preserve previously observed slots. Slot counts remain unknown if unit details
+are incomplete. Firmware versions and reported function bits describe device
+evidence, not authorization: changing observations cannot grant proxy write
+permissions. The projection excludes credentials, module serials and filament
+tags. Unknown models can have observed AMS/sensors while camera and unobserved
+toolhead capabilities remain unknown.
+
 ## Certificate boundaries
 
 There are three unrelated certificate concerns:
