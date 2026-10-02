@@ -12,14 +12,13 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{Path as AxumPath, State},
-    http::{HeaderMap, StatusCode, Uri, header},
+    http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use subtle::ConstantTimeEq;
 
 use crate::{
     capabilities::{ObservedCapabilities, PrinterCapabilities, TELEMETRY_MAX_AGE},
@@ -35,7 +34,6 @@ struct Assets;
 #[derive(Clone)]
 struct AppState {
     session: Arc<Session>,
-    access_code: Arc<str>,
 }
 
 #[derive(Debug)]
@@ -111,23 +109,6 @@ struct EndpointRequest {
     enabled: bool,
 }
 
-fn authorized(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
-    let supplied = headers
-        .get("x-cloud-lan-proxy-key")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if state.access_code.is_empty()
-        || supplied
-            .as_bytes()
-            .ct_eq(state.access_code.as_bytes())
-            .unwrap_u8()
-            != 1
-    {
-        return Err(ApiError(StatusCode::UNAUTHORIZED, "unauthorized".into()));
-    }
-    Ok(())
-}
-
 async fn health() -> Json<Value> {
     Json(json!({"status":"ok"}))
 }
@@ -140,11 +121,7 @@ async fn auth_status(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn overview(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
-    authorized(&state, &headers)?;
+async fn overview(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let registry: Vec<Value> = fs::read(state.session.data_dir().join("printers.json"))
         .ok()
         .and_then(|v| serde_json::from_slice(&v).ok())
@@ -273,11 +250,9 @@ async fn overview(
 
 async fn put_endpoint(
     State(state): State<AppState>,
-    headers: HeaderMap,
     AxumPath(serial): AxumPath<String>,
     Json(request): Json<EndpointRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    authorized(&state, &headers)?;
     state
         .session
         .configure_endpoint(
@@ -299,11 +274,7 @@ trait Pipe: Sized {
 }
 impl<T> Pipe for T {}
 
-async fn get_settings(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AdminSettings>, ApiError> {
-    authorized(&state, &headers)?;
+async fn get_settings(State(state): State<AppState>) -> Result<Json<AdminSettings>, ApiError> {
     let path = state.session.data_dir().join("admin-settings.json");
     let settings = fs::read(path)
         .ok()
@@ -317,10 +288,8 @@ async fn get_settings(
 
 async fn put_settings(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(settings): Json<AdminSettings>,
 ) -> Result<Json<AdminSettings>, ApiError> {
-    authorized(&state, &headers)?;
     if settings.mode == ProxyMode::Unsafe {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
@@ -349,11 +318,7 @@ async fn put_settings(
     Ok(Json(settings))
 }
 
-async fn login_url(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
-    authorized(&state, &headers)?;
+async fn login_url(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     Ok(Json(
         json!({"url": cloud_auth::signin_url(&state.session.region)?}),
     ))
@@ -361,10 +326,8 @@ async fn login_url(
 
 async fn login_paste(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    authorized(&state, &headers)?;
     if request.pasted_url.len() > 20_000 {
         return Err(ApiError(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -381,11 +344,7 @@ async fn login_paste(
     Ok(Json(json!({"ok":true})))
 }
 
-async fn export_ca(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, ApiError> {
-    authorized(&state, &headers)?;
+async fn export_ca() -> Result<Response, ApiError> {
     let path = PathBuf::from(env_value(
         "PROXY_CA_EXPORT_FILE",
         "/proxy-ca/bambu-cloud-lan-proxy-ca.crt",
@@ -422,11 +381,7 @@ async fn current_settings(state: &AppState) -> Result<AdminSettings, ApiError> {
         ))
 }
 
-async fn storage_capabilities(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
-    authorized(&state, &headers)?;
+async fn storage_capabilities(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let settings = current_settings(&state).await?;
     Ok(Json(
         json!({"ability":true,"list":true,"download":true,"subfile":true,
@@ -438,10 +393,8 @@ async fn storage_capabilities(
 async fn storage_operation(
     State(state): State<AppState>,
     AxumPath(operation): AxumPath<String>,
-    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    authorized(&state, &headers)?;
     let serial = text_field(&body, "serial").to_ascii_uppercase();
     let config = state.session.facade.config().await;
     if operation != "discard" && (serial.is_empty() || !config.permits_printer(&serial)) {
@@ -510,10 +463,13 @@ async fn storage_operation(
 }
 
 async fn asset(AxumPath(path): AxumPath<String>) -> Response {
-    serve_asset(&path)
+    serve_asset(&format!("assets/{path}"))
 }
 async fn fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    if path.starts_with("api/") || path.starts_with("internal/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if path.is_empty()
         || !path
             .rsplit('/')
@@ -537,6 +493,7 @@ fn serve_asset(path: &str) -> Response {
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
         Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
         _ => "text/html; charset=utf-8",
     };
     Response::builder()
@@ -555,14 +512,11 @@ fn serve_asset(path: &str) -> Response {
 }
 
 pub async fn serve(session: Arc<Session>) -> Result<()> {
-    let access_code: Arc<str> = env_value("CLOUD_LAN_PROXY_ACCESS_CODE", "").into();
-    if access_code.is_empty() {
-        anyhow::bail!("CLOUD_LAN_PROXY_ACCESS_CODE is required")
-    }
-    let state = AppState {
-        session,
-        access_code,
-    };
+    let auth = crate::admin_auth::Auth::new(
+        crate::admin_auth::Config::from_env()?,
+        env_value("CLOUD_LAN_PROXY_ACCESS_CODE", ""),
+    )?;
+    let state = AppState { session };
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/cloud/auth/status", get(auth_status))
@@ -585,7 +539,12 @@ pub async fn serve(session: Arc<Session>) -> Result<()> {
         )
         .route("/assets/{*path}", get(asset))
         .fallback(fallback)
-        .with_state(state);
+        .with_state(state)
+        .merge(crate::admin_auth::routes(auth.clone()))
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::admin_auth::guard,
+        ));
     let address: SocketAddr = env_value("PROXY_HTTP_BIND", "0.0.0.0:4844").parse()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address, "admin server listening");

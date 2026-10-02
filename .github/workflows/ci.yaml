@@ -27,6 +27,16 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run test:ui
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-test-results
+          path: web/test-results/
+          retention-days: 7
       - run: cargo test --locked
       - run: cp .env.example .env
       - run: sed -i 's/PROXY_ACCESS_CODE=CHANGE_ME/PROXY_ACCESS_CODE=TEST1234/' .env
