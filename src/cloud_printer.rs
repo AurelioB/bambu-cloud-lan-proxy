@@ -14,6 +14,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, RwLock, mpsc};
 
+use crate::capabilities::ObservedCapabilities;
 use crate::plugin_rpc::PluginRpc;
 
 #[derive(Clone, Debug, Serialize)]
@@ -37,6 +38,7 @@ struct Inner {
     marker: PathBuf,
     secure_marker: PathBuf,
     progress: Mutex<Option<mpsc::Sender<Value>>>,
+    capabilities: RwLock<ObservedCapabilities>,
 }
 
 impl CloudPrinter {
@@ -56,6 +58,7 @@ impl CloudPrinter {
                 marker,
                 secure_marker,
                 progress: Mutex::new(None),
+                capabilities: RwLock::new(ObservedCapabilities::default()),
             }),
         }
     }
@@ -111,6 +114,13 @@ impl CloudPrinter {
         let Some(envelope): Option<Value> = envelope else {
             return false;
         };
+        self.inner.capabilities.write().await.observe(
+            &envelope,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
         let Some(state) = envelope
             .pointer("/print/gcode_state")
             .and_then(Value::as_str)
@@ -142,6 +152,9 @@ impl CloudPrinter {
             },
             secure_control: self.inner.secure.load(Ordering::Acquire),
         }
+    }
+    pub async fn observed_capabilities(&self) -> ObservedCapabilities {
+        self.inner.capabilities.read().await.clone()
     }
     pub async fn send(&self, envelope: Value, qos: u8) -> Result<i64> {
         let result = self

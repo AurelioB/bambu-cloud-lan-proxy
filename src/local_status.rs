@@ -1,3 +1,4 @@
+use crate::capabilities::ObservedCapabilities;
 use crate::{camera, config::env_value};
 use anyhow::{Result, bail};
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, TlsConfiguration, Transport};
@@ -18,6 +19,8 @@ pub async fn run() -> Result<()> {
     let state = PathBuf::from(env_value("LOCAL_STATUS_STATE_DIR", "/state"));
     fs::create_dir_all(&state)?;
     let heartbeat = state.join(format!("{}.local", source.serial));
+    let capabilities_path = state.join(format!("{}.capabilities.json", source.serial));
+    let mut capabilities = ObservedCapabilities::default();
     let fingerprint = camera::resolve_fingerprint(
         &upstream_ip,
         upstream_port,
@@ -54,11 +57,28 @@ pub async fn run() -> Result<()> {
     tracing::info!(serial=%source.serial,"local read-only telemetry enabled");
     let result = loop {
         tokio::select! {
-            event=upstream_loop.poll()=>match event{Ok(Event::Incoming(Incoming::Publish(message)))=>{if message.topic==topic&&serde_json::from_slice::<Value>(&message.payload).is_ok(){downstream.publish(&message.topic,QoS::AtMostOnce,false,message.payload).await?;let temporary=state.join(format!(".{}.tmp",source.serial));tokio::fs::write(&temporary,format!("{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())).await?;tokio::fs::rename(temporary,&heartbeat).await?}},Ok(_)=>{},Err(error)=>{tracing::warn!(%error,"local telemetry unavailable; cloud fallback remains active");tokio::time::sleep(Duration::from_secs(2)).await;}},
+            event=upstream_loop.poll()=>match event {
+                Ok(Event::Incoming(Incoming::Publish(message))) => {
+                    if message.topic == topic && let Ok(report) = serde_json::from_slice::<Value>(&message.payload) && report.is_object() {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                        capabilities.observe(&report, now);
+                        let temporary = state.join(format!(".{}.capabilities.tmp", source.serial));
+                        tokio::fs::write(&temporary, serde_json::to_vec(&capabilities)?).await?;
+                        tokio::fs::rename(temporary, &capabilities_path).await?;
+                        downstream.publish(&message.topic, QoS::AtMostOnce, false, message.payload).await?;
+                        let temporary = state.join(format!(".{}.tmp", source.serial));
+                        tokio::fs::write(&temporary, now.to_string()).await?;
+                        tokio::fs::rename(temporary, &heartbeat).await?;
+                    }
+                },
+                Ok(_) => {},
+                Err(error) => { tracing::warn!(%error,"local telemetry unavailable; cloud fallback remains active");tokio::time::sleep(Duration::from_secs(2)).await; }
+            },
             event=downstream_loop.poll()=>if let Err(error)=event{tracing::warn!(%error,"local MQTT broker unavailable");tokio::time::sleep(Duration::from_secs(2)).await;},
             signal=tokio::signal::ctrl_c()=>{signal?;break Ok(())}
         }
     };
     let _ = tokio::fs::remove_file(heartbeat).await;
+    let _ = tokio::fs::remove_file(capabilities_path).await;
     result
 }

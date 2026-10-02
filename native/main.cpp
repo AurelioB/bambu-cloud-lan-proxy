@@ -101,7 +101,7 @@ std::optional<std::string> PluginLoader::get_local_media_url(
           })) return std::nullopt;
       return "bambu:///local/" + ip +
              ".?port=6000&user=bblp&passwd=" + code + "&device=" + serial +
-             "&cli_id=cloud-lan-proxy&cli_ver=0.6.0";
+             "&cli_id=cloud-lan-proxy&cli_ver=" BAMBU_PROXY_VERSION;
     }
   } catch (...) {
   }

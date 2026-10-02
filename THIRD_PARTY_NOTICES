@@ -34,3 +34,31 @@ endorsement of this proxy by Bambu Lab.
 nlohmann/json is installed from Debian's package repository when building
 the native adapter. Its MIT license is available with that package and at
 https://github.com/nlohmann/json/blob/develop/LICENSE.MIT
+
+MediaMTX v1.20.1 is copied from its reviewed container image into the proxy
+runtime and native release bundle. MIT License, Copyright (c) 2019 aler9.
+The MIT permission grant, notice-retention requirement, warranty disclaimer,
+and liability disclaimer reproduced above also apply to this component.
+Upstream license: https://github.com/bluenviron/mediamtx/blob/v1.20.1/LICENSE
+
+Mosquitto is external broker infrastructure. Its upstream distribution and
+the derived broker image retain their own Eclipse Public License 2.0 / Eclipse
+Distribution License 1.0 notices. See https://mosquitto.org/license/ .
+Base-image system packages retain their installed Debian/Alpine license notices.
+Release SPDX inventories describe packaged dependencies, not a relicensing of
+third-party software as this project's MIT source.
+
+The application image and native bundle preserve installed Rust and npm
+dependency license/notice files under /usr/share/licenses/rust and
+/usr/share/licenses/npm (licenses/rust and licenses/npm in the native archive).
+This includes the Inter font's SIL Open Font License. npm inventory.json and
+the Rust Cargo.lock record component versions; missing upstream notice files
+and proprietary-plugin terms still require maintainer review.
+
+Generated shadcn-svelte component source uses the MIT license.
+Copyright (c) 2023 Hunter Johnston <https://github.com/huntabyte>
+Copyright (c) 2023 CokaKoala <https://github.com/adriangonz97>
+Copyright (c) 2023 shadcn
+The MIT permission grant, notice-retention requirement, warranty disclaimer,
+and liability disclaimer reproduced above also apply to this component source.
+Upstream license: https://github.com/huntabyte/shadcn-svelte/blob/main/LICENSE.md

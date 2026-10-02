@@ -1,3 +1,4 @@
+mod admin_auth;
 mod bridge;
 mod camera;
 mod capabilities;
@@ -8,6 +9,7 @@ mod config;
 mod discovery;
 mod endpoint;
 mod ftps;
+mod image_camera;
 mod local_status;
 mod native_files;
 mod plugin_install;
@@ -32,6 +34,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read a password from stdin and output an Argon2id hash for admin sign-in.
+    HashAdminPassword,
     Camera,
     Service,
     Discovery,
@@ -63,6 +67,7 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command.unwrap_or(Command::Service) {
+        Command::HashAdminPassword => admin_auth::hash_password(),
         Command::Camera => camera::run().await,
         Command::Service => service::run().await,
         Command::Discovery => discovery::run().await,

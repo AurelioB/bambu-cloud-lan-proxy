@@ -10,4 +10,10 @@ __pycache__
 target
 web/node_modules
 web/dist
+web/test-results
+web/playwright-report
+website
+examples
+.secrets
+compose.override.yaml
 .venv

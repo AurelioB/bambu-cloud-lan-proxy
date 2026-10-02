@@ -28,10 +28,13 @@ case "$runtime_gid" in
   ''|*[!0-9]*) echo "PROXY_RUNTIME_GID must be numeric" >&2; exit 2 ;;
 esac
 
-cert_dir=/data/certs
-auth_dir=/data/auth
-export_dir=/data/export
-runtime_dir=/data/runtime
+# Defaults are unchanged for containers; standalone operators can reuse the
+# same certificate/bootstrap implementation under a dedicated state directory.
+bootstrap_dir=${PROXY_BOOTSTRAP_DIR:-/data}
+cert_dir=$bootstrap_dir/certs
+auth_dir=$bootstrap_dir/auth
+export_dir=$bootstrap_dir/export
+runtime_dir=$bootstrap_dir/runtime
 runtime_cert_dir=$runtime_dir/certs
 runtime_auth_dir=$runtime_dir/auth
 camera_state_dir=${PROXY_CAMERA_STATE_DIR:-/camera-state}
@@ -122,7 +125,7 @@ cp "$auth_dir/passwords" "$runtime_auth_dir/passwords"
 # directory containing only the server material and hashed password they need.
 chown -R 0:0 "$cert_dir" "$auth_dir"
 chmod 700 "$cert_dir" "$auth_dir"
-chown -R "$runtime_uid":1883 "$runtime_dir"
+chown -R "$runtime_uid":"${PROXY_RUNTIME_CERT_GID:-1883}" "$runtime_dir"
 chown -R "$runtime_uid":"$runtime_gid" "$camera_state_dir"
 chown -R "$runtime_uid":"$runtime_gid" "$endpoint_state_dir"
 chown -R "$runtime_uid":"$runtime_gid" "$address_state_dir"

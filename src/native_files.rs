@@ -84,11 +84,17 @@ struct Session {
     max_upload: u64,
     send_sequence: u32,
     upload: Option<Upload>,
+    initial_header: Option<[u8; 16]>,
 }
 impl Session {
     async fn read_frame(&mut self) -> Result<(u32, u32, Vec<u8>)> {
-        let mut h = [0u8; 16];
-        self.stream.read_exact(&mut h).await?;
+        let h = if let Some(header) = self.initial_header.take() {
+            header
+        } else {
+            let mut header = [0; 16];
+            self.stream.read_exact(&mut header).await?;
+            header
+        };
         let size = u32::from_le_bytes(h[0..4].try_into().unwrap()) as usize;
         let magic = u32::from_le_bytes(h[4..8].try_into().unwrap());
         let sequence = u32::from_le_bytes(h[8..12].try_into().unwrap());
@@ -404,6 +410,13 @@ pub async fn run() -> Result<()> {
     let cert = PathBuf::from(env_value("FTPS_CERT_FILE", "/secrets/certs/server.crt"));
     let key = PathBuf::from(env_value("FTPS_KEY_FILE", "/secrets/certs/server.key"));
     let acceptor = crate::tls::acceptor(&cert, &key)?;
+    let camera = match crate::image_camera::ImageCamera::from_env() {
+        Ok(camera) => camera,
+        Err(error) => {
+            tracing::warn!(%error, "image camera configuration unavailable; native files remain enabled");
+            None
+        }
+    };
     let staging = PathBuf::from(env_value("FTPS_ROOT", "/staging"));
     fs::create_dir_all(staging.join("cache")).await?;
     let mut headers = HeaderMap::new();
@@ -434,24 +447,200 @@ pub async fn run() -> Result<()> {
         let access = access.clone();
         let remote = remote.clone();
         let staging = staging.clone();
+        let camera = camera.clone();
         let max_upload = env_value("FTPS_MAX_UPLOAD_MB", "1024").parse::<u64>()? * 1024 * 1024;
         tokio::spawn(async move {
-            if let Ok(stream) = acceptor.accept(socket).await {
-                let session = Session {
-                    stream,
-                    access,
-                    remote,
-                    staging,
-                    max_upload,
-                    send_sequence: 1,
-                    upload: None,
-                };
-                if let Err(e) = session.run().await {
-                    tracing::debug!(error=%e,"native file session ended")
+            if let Ok(Ok(stream)) =
+                tokio::time::timeout(Duration::from_secs(10), acceptor.accept(socket)).await
+            {
+                if let Err(error) =
+                    dispatch(stream, access, remote, staging, max_upload, camera).await
+                {
+                    tracing::debug!(%error, "shared file/camera session ended");
                 }
             }
         });
     }
+}
+
+fn is_file_login(header: &[u8; 16]) -> bool {
+    u32::from_le_bytes(header[..4].try_into().unwrap()) == 16
+        && u32::from_le_bytes(header[4..8].try_into().unwrap()) == CLIENT_LOGIN
+        && header[12..] == [0; 4]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::image_camera::{
+        ImageCamera, LOGIN_HEADER,
+        tests::{certificate_pin, frame, tls_fixture},
+    };
+
+    async fn client(address: std::net::SocketAddr) -> tokio_rustls::client::TlsStream<TcpStream> {
+        crate::tls::insecure_connector()
+            .connect(
+                rustls::pki_types::ServerName::IpAddress(address.ip().into()),
+                TcpStream::connect(address).await.unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    fn image_login(code: &str) -> Vec<u8> {
+        let mut auth = vec![0; 80];
+        auth[..16].copy_from_slice(&LOGIN_HEADER);
+        auth[16..20].copy_from_slice(b"bblp");
+        auth[48..56].copy_from_slice(code.as_bytes());
+        auth
+    }
+
+    #[tokio::test]
+    async fn file_and_image_clients_share_one_tls_listener_with_separate_authentication() {
+        let dir = tls_fixture();
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        let acceptor =
+            crate::tls::acceptor(&dir.path().join("cert.pem"), &dir.path().join("key.pem"))
+                .unwrap();
+        let upstream_acceptor = acceptor.clone();
+        let upstream = tokio::spawn(async move {
+            let (socket, _) = upstream_listener.accept().await.unwrap();
+            let mut stream = upstream_acceptor.accept(socket).await.unwrap();
+            let mut login = [0; 80];
+            stream.read_exact(&mut login).await.unwrap();
+            assert_eq!(login.as_slice(), image_login("REAL1234"));
+            stream.write_all(&frame(7)).await.unwrap();
+            let mut extra = [0];
+            let _ = stream.read(&mut extra).await;
+        });
+        let camera = ImageCamera::fixture(
+            upstream_address.ip(),
+            upstream_address.port(),
+            certificate_pin(dir.path()),
+            dir.path().to_owned(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let root = dir.path().to_owned();
+        let server = tokio::spawn(async move {
+            let mut sessions = Vec::new();
+            for _ in 0..4 {
+                let (socket, _) = listener.accept().await.unwrap();
+                let stream = acceptor.accept(socket).await.unwrap();
+                let camera = camera.clone();
+                let root = root.clone();
+                sessions.push(tokio::spawn(async move {
+                    let remote = Remote {
+                        client: reqwest::Client::new(),
+                        base: "http://127.0.0.1:9".into(),
+                        serial: "TESTIMAGE".into(),
+                        cache: root.clone(),
+                    };
+                    dispatch(
+                        stream,
+                        Arc::from("PROXY123"),
+                        remote,
+                        root,
+                        1024,
+                        Some(camera),
+                    )
+                    .await
+                }));
+            }
+            for task in sessions {
+                let _ = task.await.unwrap();
+            }
+        });
+        // Bad image credentials cannot subscribe or initiate an upstream session.
+        let mut rejected = client(address).await;
+        rejected.write_all(&image_login("BADX1234")).await.unwrap();
+        let mut byte = [0];
+        assert_eq!(rejected.read(&mut byte).await.unwrap(), 0);
+        // Native login/setup remains compatible while the camera viewer is open.
+        let mut files = client(address).await;
+        let mut credentials = [0; 16];
+        credentials[..4].copy_from_slice(b"bblp");
+        credentials[8..].copy_from_slice(b"PROXY123");
+        probe_send(&mut files, CLIENT_LOGIN, 1, &credentials)
+            .await
+            .unwrap();
+        let mut acknowledgement = [0; 20];
+        files.read_exact(&mut acknowledgement).await.unwrap();
+        assert_eq!(
+            u32::from_le_bytes(acknowledgement[4..8].try_into().unwrap()),
+            SERVER_LOGIN
+        );
+        assert_eq!(&acknowledgement[16..], &[0; 4]);
+        probe_send(
+            &mut files,
+            CLIENT_CTRL,
+            2,
+            br#"{"mtype":12291,"sequence":1}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(probe_receive(&mut files).await.unwrap().0, SERVER_CTRL);
+        let mut images = client(address).await;
+        let auth = image_login("PROXY123");
+        for fragment in auth.chunks(3) {
+            images.write_all(fragment).await.unwrap();
+        }
+        let mut received = vec![0; frame(7).len()];
+        tokio::time::timeout(Duration::from_secs(3), images.read_exact(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, frame(7));
+        // Arbitrary/malformed protocol headers are not forwarded to either path.
+        let mut unknown = client(address).await;
+        unknown.write_all(&[0; 16]).await.unwrap();
+        assert_eq!(unknown.read(&mut byte).await.unwrap(), 0);
+        drop(images);
+        drop(files);
+        drop(rejected);
+        drop(unknown);
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), upstream)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+async fn dispatch(
+    mut stream: TlsStream<TcpStream>,
+    access: Arc<str>,
+    remote: Remote,
+    staging: PathBuf,
+    max_upload: u64,
+    camera: Option<crate::image_camera::ImageCamera>,
+) -> Result<()> {
+    let mut header = [0; 16];
+    tokio::time::timeout(Duration::from_secs(15), stream.read_exact(&mut header)).await??;
+    if crate::image_camera::is_image_login(&header) {
+        let camera = camera.context("image camera is unavailable for this endpoint")?;
+        return camera.serve(stream, &access).await;
+    }
+    if !is_file_login(&header) {
+        stream.shutdown().await?;
+        bail!("unknown port-6000 protocol")
+    }
+    Session {
+        stream,
+        access,
+        remote,
+        staging,
+        max_upload,
+        send_sequence: 1,
+        upload: None,
+        initial_header: Some(header),
+    }
+    .run()
+    .await
 }
 
 async fn probe_send(

@@ -4,6 +4,19 @@ A standalone, Docker Compose deployable LAN facade for cloud-paired Bambu Lab pr
 
 The application is Rust with an embedded Svelte 5/shadcn-svelte admin console. It does not install, import, fork, or run Bambu Gateway. The only proprietary component is Bambu's official networking plugin, downloaded at startup from Bambu's HTTPS endpoint and accepted only when its version and SHA-256 hashes match the reviewed pins in `src/plugin_install.rs`. A small C++ process isolates that plugin's C++ ABI from safe Rust.
 
+## Community website and documentation
+
+The independent public site in [`website/`](website/README.md) includes a landing page, searchable guides, and an [OpenAPI reference](website/public/openapi.json). It never connects to private printer APIs. Preview it with `cd website && npm ci && npm run dev`.
+
+- [Docker Compose installation](website/src/content/docs/docs/install/compose.md) — recommended.
+- [Docker without Compose](website/src/content/docs/docs/install/docker.md).
+- [Standalone Linux installation](website/src/content/docs/docs/install/standalone.md), with [systemd/configuration examples](examples/standalone/).
+- [Features](website/src/content/docs/docs/features.md), [compatibility](website/src/content/docs/docs/compatibility.md), [HTTP API](website/src/content/docs/docs/api.md), and [operations](website/src/content/docs/docs/operations.md).
+
+The guides describe the current source tree, including features added after the original v0.6.0 release. The v0.7.0 candidate adds automated native/Compose/source packaging, but no public artifact is assumed until publication and anonymous access are verified. See [release readiness](docs/release-readiness.md) and [changes](CHANGELOG.md). Static-site publication is opt-in; the repository must be accessible to a reader before clone instructions can work.
+
+The application backend migration to Rust is complete. The isolated C++ adapter retains Bambu's C++ ABI and BambuSource media/storage calls; shell scripts handle installation and checks. Mosquitto and MediaMTX are external infrastructure. There is no Gateway or Python backend runtime.
+
 ## What it exposes
 
 - One private virtual IP per printer, all backed by one shared cloud login.
@@ -11,6 +24,7 @@ The application is Rust with an embedded Svelte 5/shadcn-svelte admin console. I
 - Implicit FTPS on `990` plus passive ports `50000-50009` for staged jobs.
 - Bambu's TLS native-file protocol on `6000` for previous jobs, timelapses, downloads, optional uploads, and optional deletion. Printer-resident file operations prefer the configured local printer connection and fall back to the official cloud media tunnel.
 - RTSPS camera access on `322`, backed by the printer's local liveview and protected with certificate pinning.
+- Local image-camera access for A1 / A1 mini / A2L / P1P / P1S on `6000`, multiplexed with native files and shared across viewers.
 - SSDP discovery for LAN clients.
 - An authenticated admin console on `127.0.0.1:4844` by default.
 - Optional local, read-only MQTT telemetry with automatic cloud-report fallback.
@@ -20,7 +34,7 @@ Control and print writes use Bambu Cloud and the official plugin's device certif
 ## Requirements
 
 - Linux x86-64. The reviewed Bambu plugin build is x86-64 ELF.
-- Docker Engine with Compose v2.
+- Docker Engine with Compose v2; prebuilt release bundles require Compose 2.24.4+.
 - The printer and proxy host on a trusted private network.
 - For camera/local telemetry: the printer's LAN-only liveview enabled, its LAN IP, and its eight-character access code. The printer itself can remain cloud-paired; do not enable printer LAN-only mode.
 
@@ -28,8 +42,17 @@ Do not publish ports `322`, `990`, `6000`, `8883`, the passive FTPS range, or th
 
 ## Install
 
+The instructions below build from source. Once a reviewed release is published,
+its Compose bundle can use prebuilt images without installing Rust/Node/C++
+toolchains: verify `SHA256SUMS`, extract the `*-compose.tar.gz` archive, edit
+the generated `.env` after `./scripts/init.sh`, then run `./scripts/deploy.sh`.
+Its `release.env` selects versioned images and `scripts/compose.sh` applies the
+build-free override. Use that wrapper for subsequent Compose operations. The
+native bundle and its runtime requirements are described in
+[standalone binary installation](docs/standalone-binary.md).
+
 ```sh
-git clone git@github.com:AurelioB/bambu-cloud-lan-proxy.git
+git clone https://github.com/AurelioB/bambu-cloud-lan-proxy.git
 cd bambu-cloud-lan-proxy
 ./scripts/init.sh
 ```
@@ -52,7 +75,7 @@ Start the shared cloud core:
 
 Open `http://127.0.0.1:4844` (or your configured `GATEWAY_BIND_IP:GATEWAY_PORT`) and enter `PROXY_ACCESS_CODE` from `.env`. Under **Bambu account**, complete the official sign-in flow. The account printers are discovered automatically.
 
-Under **Connections → Printer endpoints**, give every printer:
+Under **Printers → Configure** (also available in **Connections**), give every printer:
 
 - a unique reserved virtual IPv4 address;
 - its physical LAN IP if camera or local telemetry is wanted;
@@ -85,6 +108,14 @@ Apply the addresses and regenerate the proxy certificate with every virtual IP i
 The narrowly scoped address manager is the only long-running container with `NET_ADMIN`. It reconciles the configured aliases every 15 seconds, removes only addresses recorded in its private managed-address state, and restores them automatically after a host reboot. The cloud core and endpoint manager do not receive network-administration capability. On a standalone Linux installation, run `endpoint-address-manager` under an equivalent supervised boot service; `endpoint-addresses` remains available as a one-shot reconciliation command.
 
 The endpoint manager publishes per-printer MQTT, FTPS, native-file, and applicable camera health to the admin console. Core endpoint processes are restarted automatically; failure of the isolated native plugin exits the cloud container so Compose can restart it without replaying commands.
+
+## Admin workspace
+
+The responsive console includes searchable printer cards and a compact list, per-printer connection editing, a connection guide, account sign-in, and explicit permission controls. Choose light, dark, or system appearance from the header. Camera support and unknown model capabilities are labelled individually; live video and print controls remain in your connected apps.
+
+Optional bundled local administrator login and OIDC protect **only the admin UI and its APIs**. Virtual-printer access codes and client compatibility are unchanged. The default remains access-code sign-in; no mode allows anonymous private access. See [admin authentication setup and security boundaries](docs/admin-authentication.md) for local, OIDC-only, and combined modes.
+
+See [the UI design review](docs/ui-redesign.md) for reference comparisons, the complete shadcn-svelte component audit, and browser-test instructions.
 
 ## Bambuddy / LAN client setup
 
@@ -119,7 +150,9 @@ docker compose logs --tail=200 gateway mqtt endpoint-manager
 
 Camera and local MQTT certificates use trust-on-first-use pins under `data/camera/` and `data/local-status/`. If the printer legitimately replaces a certificate, compare the new fingerprint out of band before removing the corresponding pin file.
 
-The admin API exposes conservative capability profiles for each discovered model. RTSPS-capable printers can use the local port-322 camera bridge. A1, A1 mini, A2L, and P1P-class image cameras are identified in the UI but are not currently translated; the endpoint still provides cloud control, telemetry, and proxy file services. Unknown future models are reported as unknown instead of being assumed compatible.
+The admin API derives attached AMS units, reported filament slots, firmware functions, and sensors from fresh telemetry. Local evidence takes precedence; cloud evidence fills missing fields, and conservative model profiles fill remaining gaps. `observed_fields` identifies the evidence-backed fields. Stale observations expire rather than inventing capabilities.
+
+RTSPS-capable models use the local port-322 bridge. A1, A1 mini, A2L, P1P, and P1S image clients use the same virtual port `6000` as native files, with distinct authenticated protocol dispatch. The proxy validates the proxy access code, replaces it with the physical printer code upstream, pins the camera certificate, and shares one on-demand camera connection across viewers. No extra port or transcoder is needed for Bambuddy's image protocol. Unknown models do not automatically gain a camera or toolhead profile. The image path has automated TLS/protocol tests; physical A1/P1-family validation remains outstanding.
 
 To update, pull the reviewed source and rebuild. Plugin updates intentionally fail closed until their version and hashes are reviewed and updated in source.
 

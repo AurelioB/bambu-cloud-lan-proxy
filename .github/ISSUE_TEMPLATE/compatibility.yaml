@@ -1,0 +1,49 @@
+name: Printer compatibility report
+description: Help validate camera, files, telemetry, and multi-printer behavior on hardware.
+title: "[Compatibility] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report only tests you actually performed. A1/P1 image cameras and physical fleets need community validation. Never include real serials, access codes, cloud callback URLs, tokens, private keys, or unredacted logs. Do not run physical write tests merely to fill out this form.
+  - type: input
+    id: proxy
+    attributes:
+      label: Proxy version or commit
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model and firmware
+      description: Model name and firmware version, not the device serial.
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Client and version
+      placeholder: Bambuddy / Bambu Studio / another LAN client
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Deployment and printer configuration
+      description: Linux distribution/architecture, Compose or native, liveview enabled, local credentials configured, and AMS arrangement. No actual IPs/codes needed.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Observed operations and results
+      description: Distinguish listing/download/status/camera from controls/printing. Note whether Handy remained connected and how local/cloud fallback was tested.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed credentials, serials, callbacks, and private printer data.
+          required: true

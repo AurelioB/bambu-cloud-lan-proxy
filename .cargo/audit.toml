@@ -1,0 +1,10 @@
+[advisories]
+# Reviewed, reachability-scoped exceptions; see docs/dependency-security.md.
+# Reassess whenever rumqttc, openidconnect, rsa, or TLS/auth usage changes.
+ignore = [
+  "RUSTSEC-2023-0071", # RSA private-key timing: verification-only OIDC client.
+  "RUSTSEC-2026-0049", # rumqttc's unused webpki 0.102 error type, not CRL parsing.
+  "RUSTSEC-2026-0098", # Same unused webpki dependency, not name validation.
+  "RUSTSEC-2026-0099", # Same unused webpki dependency, not name validation.
+  "RUSTSEC-2026-0104", # Same unused webpki dependency, not CRL parsing.
+]

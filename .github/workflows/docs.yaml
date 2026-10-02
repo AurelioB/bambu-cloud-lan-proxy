@@ -1,0 +1,45 @@
+name: Documentation checks
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+        working-directory: website
+      - run: npm run check
+        working-directory: website
+      - run: npm run build
+        working-directory: website
+      - run: npx playwright install --with-deps chromium
+        working-directory: website
+      - run: npm test
+        working-directory: website
+      - run: SITE_BASE=/bambu-cloud-lan-proxy/ npm run build
+        working-directory: website
+      - run: sh -n docker/bootstrap.sh examples/standalone/bootstrap.sh
+      - run: docker build -f docker/bootstrap.Dockerfile -t bambu-proxy-bootstrap:docs-check .
+      - run: docker run --rm --network none --entrypoint sh -v "$PWD/tests/bootstrap-docs.sh:/test.sh:ro" bambu-proxy-bootstrap:docs-check /test.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: documentation-test-results
+          path: website/test-results/
+          retention-days: 7

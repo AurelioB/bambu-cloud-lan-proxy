@@ -1,0 +1,50 @@
+# Replace both CHANGE_ME values with the SAME eight-letter/digit proxy code.
+# This file is usable by systemd EnvironmentFile and a POSIX shell.
+PROXY_ACCESS_CODE=CHANGE_ME
+CLOUD_LAN_PROXY_ACCESS_CODE=CHANGE_ME
+BAMBU_CLOUD_REGION=US
+PROXY_HTTP_BIND=127.0.0.1:4844
+PROXY_DATA_DIR=/var/lib/bambu-proxy/cloud
+BAMBU_PLUGIN_HOST=/usr/local/bin/bambu-proxy-native
+PROXY_CA_EXPORT_FILE=/var/lib/bambu-proxy/tls/export/bambu-cloud-lan-proxy-ca.crt
+ADMIN_AUTH_MODE=access_code
+CLOUD_LAN_PROXY_BROKER_HOST=127.0.0.1
+CLOUD_LAN_PROXY_BROKER_PORT=1883
+CLOUD_LAN_PROXY_MODE=read_only
+CLOUD_LAN_PROXY_ALLOW_CANCEL=false
+CLOUD_LAN_PROXY_CLOUD_PRINT_ENABLED=false
+CLOUD_LAN_PROXY_REMOTE_REPRINT_ENABLED=false
+CLOUD_LAN_PROXY_STORAGE_ALLOW_UPLOAD=false
+CLOUD_LAN_PROXY_STORAGE_ALLOW_DELETE=false
+CLOUD_LAN_PROXY_STAGING_DIR=/var/lib/bambu-proxy/staging
+CLOUD_LAN_PROXY_CLOUD_PRINT_JOB_DIR=/var/lib/bambu-proxy/cloud/jobs
+CLOUD_LAN_PROXY_REMOTE_CACHE_DIR=/var/lib/bambu-proxy/remote-cache
+CLOUD_LAN_PROXY_LOCAL_STATUS_STATE_DIR=/var/lib/bambu-proxy/local-status
+CLOUD_LAN_PROXY_ENDPOINT_STATUS_FILE=/var/lib/bambu-proxy/endpoints/status.json
+ENDPOINT_REGISTRY=/var/lib/bambu-proxy/cloud/printers.json
+# Replace with your physical LAN interface before assigning non-loopback IPs.
+ENDPOINT_INTERFACE=eth0
+ENDPOINT_ADDRESS_STATE=/var/lib/bambu-proxy/addresses/managed.json
+ENDPOINT_BROKER_HOST=127.0.0.1
+ENDPOINT_BROKER_PORT=1883
+ENDPOINT_TLS_BROKER_PORT=18883
+ENDPOINT_STORAGE_API_URL=http://127.0.0.1:4844/internal/cloud-lan-proxy/storage
+ENDPOINT_STAGING_ROOT=/var/lib/bambu-proxy/staging
+ENDPOINT_REMOTE_CACHE_DIR=/var/lib/bambu-proxy/remote-cache
+ENDPOINT_CAMERA_STATE_DIR=/var/lib/bambu-proxy/camera
+ENDPOINT_LOCAL_STATUS_DIR=/var/lib/bambu-proxy/local-status
+ENDPOINT_STATUS_FILE=/var/lib/bambu-proxy/endpoints/status.json
+ENDPOINT_CERT_FILE=/var/lib/bambu-proxy/tls/runtime/certs/server.crt
+ENDPOINT_KEY_FILE=/var/lib/bambu-proxy/tls/runtime/certs/server.key
+CAMERA_SERVER_CERT=/var/lib/bambu-proxy/tls/runtime/certs/server.crt
+CAMERA_SERVER_KEY=/var/lib/bambu-proxy/tls/runtime/certs/server.key
+# Bootstrap-only settings; no secret extraction from a separate project.
+PROXY_BOOTSTRAP_DIR=/var/lib/bambu-proxy/tls
+PROXY_BIND_IP=127.0.0.2
+PROXY_PRINTER_REGISTRY=/var/lib/bambu-proxy/cloud/printers.json
+PROXY_STAGING_DIR=/var/lib/bambu-proxy/staging
+PROXY_CAMERA_STATE_DIR=/var/lib/bambu-proxy/camera
+PROXY_REMOTE_CACHE_DIR=/var/lib/bambu-proxy/remote-cache
+PROXY_LOCAL_STATUS_DIR=/var/lib/bambu-proxy/local-status
+PROXY_ENDPOINT_STATE_DIR=/var/lib/bambu-proxy/endpoints
+PROXY_ADDRESS_STATE_DIR=/var/lib/bambu-proxy/addresses

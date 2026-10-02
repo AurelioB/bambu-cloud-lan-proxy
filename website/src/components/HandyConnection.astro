@@ -1,0 +1,394 @@
+<section
+  id="handy-connection"
+  class="section wrap"
+  aria-labelledby="handy-title"
+>
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">TWO CLIENTS. ONE PRINTER.</p>
+      <h2 id="handy-title">
+        Handy keeps
+        <br />
+        its own connection.
+      </h2>
+    </div>
+    <p>
+      The proxy adds a way in for local tools. It does not sit between Bambu
+      Handy and Bambu Cloud, or switch your printer into LAN-only mode.
+    </p>
+  </div>
+
+  <handy-connection data-offline="false" data-paused="true">
+    <div class="connection-toolbar">
+      <span class="connection-kicker">INDEPENDENT CONNECTION PATHS</span>
+      <button type="button" data-play disabled>
+        Play animation
+      </button>
+    </div>
+    <div
+      class="connection-map"
+      role="img"
+      aria-label="Bambu Handy connects directly to Bambu Cloud, which connects to your cloud-paired printer. Separately, a local app connects to the proxy, which routes through LAN or cloud. Handy traffic never passes through the proxy."
+    >
+      <div class="connection-row handy-row" aria-hidden="true">
+        <div class="connection-node">
+          <span>YOUR PHONE</span>
+          <strong>Bambu Handy</strong>
+          <small>Normal cloud connection</small>
+        </div>
+        <div class="connection-wire">
+          <span>↔</span>
+        </div>
+        <div class="connection-node">
+          <span>BAMBU’S SERVICE</span>
+          <strong>Bambu Cloud</strong>
+          <small>Existing account & pairing</small>
+        </div>
+        <div class="connection-wire">
+          <span>↔</span>
+        </div>
+        <div class="connection-node">
+          <span>THE REAL DEVICE</span>
+          <strong>Your printer</strong>
+          <small>Still cloud-paired</small>
+        </div>
+      </div>
+      <p class="path-separation">
+        <span aria-hidden="true">↳</span> Handy traffic never enters the proxy
+        below.
+      </p>
+      <div class="connection-row proxy-row" aria-hidden="true">
+        <div class="connection-node">
+          <span>YOUR LOCAL TOOL</span>
+          <strong>Bambuddy · Studio</strong>
+          <small>Virtual LAN endpoint</small>
+        </div>
+        <div class="connection-wire">
+          <span>↔</span>
+        </div>
+        <div class="connection-node connection-proxy">
+          <span>ON YOUR HOST</span>
+          <strong>Cloud LAN Proxy</strong>
+          <small data-proxy-state>Available</small>
+        </div>
+        <div class="connection-wire">
+          <span>↔</span>
+        </div>
+        <div class="connection-node">
+          <span>ROUTED PER OPERATION</span>
+          <strong>LAN or cloud</strong>
+          <small>To the same printer above</small>
+        </div>
+      </div>
+    </div>
+    <div class="connection-controls">
+      <label>
+        <input type="checkbox" data-offline-toggle disabled /> Simulate proxy
+        offline
+      </label>
+      <span>Illustration only · no connections changed</span>
+    </div>
+    <p class="connection-explanation" data-explanation role="status">
+      Both paths are available. Handy uses its direct cloud connection; your
+      local app uses the proxy.
+    </p>
+    <noscript>
+      <p class="connection-explanation">
+        This static diagram shows the two separate paths. Handy does not depend
+        on the proxy being online.
+      </p>
+    </noscript>
+  </handy-connection>
+  <p class="section-note">
+    Independent paths, shared printer state: actions from either app affect the
+    same printer. A proxy outage does not reroute Handy, but internet, Bambu
+    Cloud, account, or printer problems can still affect its connection.
+  </p>
+</section>
+
+<script>
+  class HandyConnection extends HTMLElement {
+    private cleanup?: () => void;
+
+    connectedCallback() {
+      this.cleanup?.();
+      const controller = new AbortController();
+      const { signal } = controller;
+      const play = this.querySelector<HTMLButtonElement>('[data-play]')!;
+      const offline = this.querySelector<HTMLInputElement>(
+        '[data-offline-toggle]',
+      )!;
+      const motion = matchMedia('(prefers-reduced-motion: reduce)');
+      let paused = motion.matches;
+      let visible = false;
+      const updatePlayback = () => {
+        this.dataset.paused = String(paused || !visible || document.hidden);
+        play.textContent = paused ? 'Play animation' : 'Pause animation';
+      };
+      offline.addEventListener(
+        'change',
+        () => {
+          this.dataset.offline = String(offline.checked);
+          this.querySelector('[data-proxy-state]')!.textContent =
+            offline.checked ? 'Offline · simulated' : 'Available';
+          this.querySelector('[data-explanation]')!.textContent =
+            offline.checked
+              ? 'Proxy offline: local apps lose their proxy connection. Handy’s direct cloud path is unchanged; it does not pass through or depend on the proxy.'
+              : 'Both paths are available. Handy uses its direct cloud connection; your local app uses the proxy.';
+        },
+        { signal },
+      );
+      play.addEventListener(
+        'click',
+        () => {
+          paused = !paused;
+          updatePlayback();
+        },
+        { signal },
+      );
+      motion.addEventListener(
+        'change',
+        () => {
+          paused = motion.matches;
+          updatePlayback();
+        },
+        { signal },
+      );
+      document.addEventListener('visibilitychange', updatePlayback, { signal });
+      const observer = new IntersectionObserver(([entry]) => {
+        visible = entry.isIntersecting;
+        updatePlayback();
+      });
+      observer.observe(this);
+      play.disabled = false;
+      offline.disabled = false;
+      updatePlayback();
+      this.cleanup = () => {
+        controller.abort();
+        observer.disconnect();
+      };
+    }
+
+    disconnectedCallback() {
+      this.cleanup?.();
+    }
+  }
+  if (!customElements.get('handy-connection'))
+    customElements.define('handy-connection', HandyConnection);
+</script>
+
+<style>
+  handy-connection {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .connection-toolbar,
+  .connection-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 24px;
+    flex-wrap: wrap;
+  }
+  .connection-toolbar {
+    border-bottom: 1px solid var(--border);
+  }
+  .connection-kicker {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+  }
+  button {
+    background: var(--surface);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font: inherit;
+    font-size: 12px;
+    padding: 9px 12px;
+    cursor: pointer;
+  }
+  button:focus-visible,
+  input:focus-visible {
+    outline: 3px solid var(--primary);
+    outline-offset: 3px;
+  }
+  .connection-map {
+    padding: 32px 24px 12px;
+  }
+  .connection-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr) 64px minmax(
+        0,
+        1fr
+      );
+    align-items: center;
+  }
+  .connection-node {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 16px;
+    background: var(--background);
+    min-width: 0;
+  }
+  .handy-row .connection-node {
+    border-color: var(--primary);
+  }
+  .connection-node > span {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    color: var(--muted);
+  }
+  .connection-node strong {
+    font-size: clamp(14px, 1.7vw, 20px);
+    letter-spacing: -0.04em;
+  }
+  .connection-node small {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .connection-wire {
+    height: 2px;
+    background: var(--primary);
+    position: relative;
+  }
+  .connection-wire > span {
+    position: absolute;
+    left: calc(50% - 8px);
+    top: -28px;
+    color: var(--primary);
+    font-size: 18px;
+  }
+  .connection-wire::after {
+    content: '';
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    background: var(--primary);
+    border-radius: 50%;
+    top: -2.5px;
+    animation: travel 3s ease-in-out infinite alternate;
+  }
+  [data-paused='true'] .connection-wire::after {
+    animation-play-state: paused;
+  }
+  .path-separation {
+    font-size: 13px;
+    line-height: 1.7;
+    margin: 24px 0;
+    color: var(--primary);
+  }
+  .path-separation span {
+    margin-right: 8px;
+  }
+  .proxy-row .connection-wire {
+    background: none;
+    border-top: 2px dashed var(--muted);
+  }
+  [data-offline='true'] .proxy-row .connection-wire {
+    border-color: var(--border);
+  }
+  [data-offline='true'] .proxy-row .connection-wire::after {
+    display: none;
+  }
+  [data-offline='true'] .proxy-row .connection-wire > span {
+    visibility: hidden;
+  }
+  [data-offline='true'] .connection-proxy {
+    border-style: dashed;
+    background: var(--surface);
+  }
+  .connection-controls label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  input {
+    accent-color: var(--primary);
+    width: 17px;
+    height: 17px;
+  }
+  .connection-controls > span {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .connection-explanation {
+    margin: 0;
+    padding: 20px 24px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  @keyframes travel {
+    from {
+      left: 0;
+    }
+    to {
+      left: calc(100% - 7px);
+    }
+  }
+  @keyframes travel-vertical {
+    from {
+      top: 0;
+    }
+    to {
+      top: calc(100% - 7px);
+    }
+  }
+  @media (max-width: 720px) {
+    .connection-map {
+      padding: 24px 16px 8px;
+    }
+    .connection-row {
+      grid-template-columns: minmax(0, 1fr);
+      justify-items: stretch;
+    }
+    .connection-node {
+      text-align: center;
+      padding: 16px;
+    }
+    .connection-node strong {
+      font-size: 18px;
+    }
+    .connection-wire {
+      height: 36px;
+      width: 2px;
+      justify-self: center;
+    }
+    .connection-wire > span {
+      top: 5px;
+      left: 14px;
+      transform: rotate(90deg);
+    }
+    .connection-wire::after {
+      left: -2.5px;
+      top: 0;
+      animation-name: travel-vertical;
+    }
+    .proxy-row .connection-wire {
+      border-top: 0;
+      border-left: 2px dashed var(--muted);
+    }
+    .proxy-row .connection-wire::after {
+      left: -4.5px;
+    }
+    .connection-toolbar,
+    .connection-controls,
+    .connection-explanation {
+      padding: 16px;
+    }
+  }
+</style>

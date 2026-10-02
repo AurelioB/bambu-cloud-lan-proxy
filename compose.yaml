@@ -296,6 +296,17 @@ services:
       - "${GATEWAY_BIND_IP:-127.0.0.1}:${GATEWAY_PORT:-4844}:4844"
     environment:
       TZ: ${TZ:-UTC}
+      ADMIN_AUTH_MODE: ${ADMIN_AUTH_MODE:-access_code}
+      ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      ADMIN_PASSWORD_HASH_FILE: ${ADMIN_PASSWORD_HASH_FILE:-}
+      ADMIN_OIDC_ISSUER: ${ADMIN_OIDC_ISSUER:-}
+      ADMIN_OIDC_CLIENT_ID: ${ADMIN_OIDC_CLIENT_ID:-}
+      ADMIN_OIDC_CLIENT_SECRET: ${ADMIN_OIDC_CLIENT_SECRET:-}
+      ADMIN_OIDC_CLIENT_SECRET_FILE: ${ADMIN_OIDC_CLIENT_SECRET_FILE:-}
+      ADMIN_OIDC_ALLOWED_SUBJECTS: ${ADMIN_OIDC_ALLOWED_SUBJECTS:-}
+      ADMIN_SESSION_SECONDS: ${ADMIN_SESSION_SECONDS:-3600}
       BAMBU_CLOUD_ENABLED: "true"
       BAMBU_CLOUD_REGION: ${BAMBU_CLOUD_REGION:-US}
       CLOUD_LAN_PROXY_ENABLED: "true"
@@ -340,7 +351,7 @@ services:
         - CMD
         - sh
         - -c
-        - curl -fsS http://127.0.0.1:4844/api/health >/dev/null && curl -fsS http://127.0.0.1:4844/api/cloud/auth/status >/dev/null
+        - curl -fsS http://127.0.0.1:4844/api/health >/dev/null
       interval: 30s
       timeout: 5s
       retries: 5

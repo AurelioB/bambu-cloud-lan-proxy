@@ -1,18 +1,20 @@
 [package]
 name = "bambu-cloud-lan-proxy"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 license = "MIT"
 description = "A standalone local Bambu-shaped LAN facade backed by Bambu cloud sessions"
 
 [dependencies]
 anyhow = "1.0"
+argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["json", "tokio"] }
 bytes = "1.10"
 clap = { version = "4.5", features = ["derive", "env"] }
 futures-util = "0.3"
 hex = "0.4"
 md-5 = "0.10"
+openidconnect = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
 percent-encoding = "2.3"
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "multipart", "rustls-tls", "stream"] }
@@ -37,6 +39,7 @@ zip = { version = "4.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3.21"
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 lto = "thin"

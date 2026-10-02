@@ -1,0 +1,36 @@
+# Requires Docker Compose 2.24.4+ for !reset. Merge with compose.yaml.
+# Image references are supplied by the release bundle's release.env.
+services:
+  bootstrap:
+    image: ${PROXY_BOOTSTRAP_IMAGE:?Missing release.env}
+    build: !reset null
+  mqtt:
+    image: ${PROXY_MQTT_IMAGE:?Missing release.env}
+    build: !reset null
+  gateway:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  endpoint-manager:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  endpoint-addresses:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  ftps:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  camera:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  native-files:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  discovery:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  camera-ingress:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null
+  local-status:
+    image: ${PROXY_IMAGE:?Missing release.env}
+    build: !reset null

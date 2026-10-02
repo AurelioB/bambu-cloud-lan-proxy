@@ -5,6 +5,8 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run check && npm run build
+COPY scripts/collect-npm-licenses.mjs /src/collect-npm-licenses.mjs
+RUN node /src/collect-npm-licenses.mjs node_modules /licenses/npm
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS native-builder
 RUN apt-get update \
@@ -20,13 +22,17 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY --from=web-builder /src/web/dist ./web/dist
 RUN cargo build --locked --release
+COPY scripts/collect-rust-licenses.sh /src/collect-rust-licenses.sh
+RUN sh /src/collect-rust-licenses.sh /licenses/rust
 
 FROM bluenviron/mediamtx@sha256:1b029d11049be75630e9b73bb0d5f47b08a7db4eaee89a80bf8f53bc40e56414 AS mediamtx
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
 ARG PROXY_VERSION="dev"
+ARG PROXY_REVISION="unknown"
 LABEL org.opencontainers.image.title="Bambu Cloud LAN Proxy" \
       org.opencontainers.image.version="${PROXY_VERSION}" \
+      org.opencontainers.image.revision="${PROXY_REVISION}" \
       org.opencontainers.image.source="https://github.com/AurelioB/bambu-cloud-lan-proxy" \
       org.opencontainers.image.licenses="MIT"
 RUN apt-get update \
@@ -38,6 +44,8 @@ COPY --from=rust-builder /src/target/release/bambu-cloud-lan-proxy /usr/local/bi
 COPY --from=native-builder /build/bambu-proxy-native /usr/local/bin/bambu-proxy-native
 COPY --from=native-builder /usr/share/doc/nlohmann-json3-dev/copyright /usr/share/licenses/nlohmann-json/copyright
 COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
+COPY --from=web-builder /licenses/npm /usr/share/licenses/npm
+COPY --from=rust-builder /licenses/rust /usr/share/licenses/rust
 COPY LICENSE THIRD_PARTY_NOTICES /usr/share/licenses/bambu-cloud-lan-proxy/
 VOLUME /data
 EXPOSE 4844
